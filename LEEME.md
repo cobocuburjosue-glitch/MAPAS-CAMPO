@@ -29,4 +29,6 @@ Mantén presionado el mapa o toca 📍 (en tu posición). Tipos: árbol, plaga, 
 Botón capas ▸ Exportar: **KMZ con fotos** (Google Earth / QGIS), **CSV** (Excel, con UTM y atributos) o **GeoJSON**. Se puede compartir directo por WhatsApp o correo.
 
 ## Otras herramientas
-Medir distancia y área (ha), superponer varios mapas, opacidad, colores del ráster, fondo satelital (solo con internet).
+Medir distancia y área (ha), superponer varios mapas, opacidad y colores del ráster.
+
+

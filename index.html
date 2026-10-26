@@ -708,6 +708,10 @@ input,select,textarea{font:inherit}
 .card .meta{font-size:12.5px;color:var(--muted);margin-top:3px}
 .badge{display:inline-block;margin-top:6px;font-size:12px;font-weight:650;padding:3px 8px;border-radius:6px;background:#eef2f7;color:#3b4a5e}
 .badge.here{background:#dbeafe;color:#1d4ed8}
+.base-card{width:100%;margin-bottom:10px;font:inherit;color:inherit;cursor:pointer}
+.bases{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}
+.bases button{padding:10px 8px;border-radius:10px;border:2px solid var(--line);font-size:14px;font-weight:600;color:var(--muted)}
+.bases button.sel{border-color:var(--accent);background:var(--accent-soft);color:var(--ink)}
 .card .more{width:40px;height:40px;border-radius:10px;font-size:22px;color:var(--muted);flex:none}
 .empty{text-align:center;color:var(--muted);padding:40px 10px}
 .empty h2{color:var(--ink);font-size:18px;margin:12px 0 6px}
@@ -843,6 +847,10 @@ label.btn{cursor:pointer}
     <button id="installBtn" class="chip" hidden>Instalar app</button>
   </header>
   <div class="gps-line"><span class="led" id="libLed"></span><span id="libGps">Buscando GPS…</span></div>
+  <button class="card base-card" id="openBase">
+    <div class="thumb" style="background:linear-gradient(135deg,#2f5d3a,#6b8f4e 45%,#a7a06a);display:grid;place-items:center"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></div>
+    <div class="info" style="text-align:left"><div class="name">Mapa base + GPS</div><div class="meta">Google Satélite, híbrido, ESRI, OSM · como QuickMap</div><span class="badge here">Usa tu posición sin cargar mapa</span></div>
+  </button>
   <ul id="mapList"></ul>
   <div id="empty" class="empty" hidden>
     <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#9a958b" stroke-width="1.5"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z"/><path d="M9 4v14M15 6v14"/></svg>
@@ -1522,6 +1530,8 @@ async function mapMenu(m){
     renderLibrary(); toast('Mapa eliminado'); } }
 }
 
+$('#openBase').onclick=()=>openMap('__base__');
+
 /* =========================================================
    GPS
    ========================================================= */
@@ -1565,17 +1575,33 @@ function initMap(){
   el.addEventListener('contextmenu',e=>e.preventDefault());
   view.map=m; view.featLayer=L.layerGroup().addTo(m);
 }
-function setBasemap(on){
-  lsSet('basemap',on);
+/* Mapas base (como QuickMapServices en QGIS). Requieren internet; las zonas que ya viste quedan guardadas para usarlas sin señal. */
+const BASEMAPS={
+  none:      { name:'Sin fondo' },
+  gsat:      { name:'Google Satélite', url:'https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', sub:'0123', max:20, attr:'Imágenes © Google' },
+  ghyb:      { name:'Google Híbrido',  url:'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', sub:'0123', max:20, attr:'Imágenes © Google' },
+  groad:     { name:'Google Mapa',     url:'https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', sub:'0123', max:20, attr:'Mapa © Google' },
+  gterr:     { name:'Google Relieve',  url:'https://mt{s}.google.com/vt/lyrs=p&x={x}&y={y}&z={z}', sub:'0123', max:20, attr:'Mapa © Google' },
+  esri:      { name:'ESRI Satélite',   url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', max:19, attr:'Imágenes © Esri' },
+  osm:       { name:'OpenStreetMap',   url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png', max:19, attr:'© OpenStreetMap' },
+};
+function curBase(){ let v=lsGet('basemap','gsat'); if(v===true) v='esri'; if(v===false) v='none'; return BASEMAPS[v]?v:'gsat'; }
+function setBasemap(key){
+  lsSet('basemap',key);
   if(view.base){ view.map.removeLayer(view.base); view.base=null; }
-  if(on){ view.base=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    { maxNativeZoom:19, maxZoom:22, attribution:'Imágenes © Esri' }).addTo(view.map); view.base.bringToBack(); }
+  const b=BASEMAPS[key]; if(!b||!b.url) return;
+  view.base=L.tileLayer(b.url,{ subdomains:b.sub||'abc', maxNativeZoom:b.max, maxZoom:22, attribution:b.attr, crossOrigin:false }).addTo(view.map);
+  view.base.bringToBack();
 }
+const BASE_META = () => ({ id:'__base__', name:'Mapa base + GPS', info:'Satélite con tu posición', kind:'base', ext:'base',
+  bounds: gps.pos ? [[gps.pos.lat-.01,gps.pos.lng-.01],[gps.pos.lat+.01,gps.pos.lng+.01]] : [[13.7,-92.3],[17.9,-88.2]] });
 
 async function openMap(id){
   await busy('Abriendo mapa…');
   try{
-    const meta=await dbGet('maps',id), data=await dbGet('data',id);
+    let meta, data;
+    if(id==='__base__'){ meta=BASE_META(); data={}; if(curBase()==='none') lsSet('basemap','gsat'); }
+    else { meta=await dbGet('maps',id); data=await dbGet('data',id); }
     if(!meta||!data) throw new Error('No se encontró el mapa');
     $('#lib').hidden=true; $('#mapView').hidden=false;
     if(!view.map) initMap();
@@ -1583,13 +1609,15 @@ async function openMap(id){
     closeMap(true);
     view.meta=meta; view.data=data;
     view.tr = data.values ? proj4(WGS, data.values.def) : null;
-    $('#mapTitle').textContent=meta.name; $('#mapSub').textContent=meta.info;
-    view.main=buildLayer(meta,data).addTo(view.map);
-    setBasemap(lsGet('basemap',false));
-    view.map.fitBounds(meta.bounds,{ padding:[20,20] });
+    $('#mapTitle').textContent=meta.name; $('#mapSub').textContent=meta.kind==='base'?BASEMAPS[curBase()].name+' · requiere internet':meta.info;
+    if(meta.kind!=='base') view.main=buildLayer(meta,data).addTo(view.map);
+    setBasemap(curBase());
+    if(meta.kind==='base' && gps.pos){ view.map.setView([gps.pos.lat,gps.pos.lng],17); setFollow(true); }
+    else view.map.fitBounds(meta.bounds,{ padding:[20,20] });
     await loadFeats();
     drawMe(); updateHUD();
     history.pushState({ map:id },'');
+    if(meta.kind==='base' && !navigator.onLine) toast('Sin internet: solo verás las zonas del mapa base que ya visitaste con señal.',5000);
   }catch(e){ console.error(e); toast(e.message||'No se pudo abrir'); showLib(); }
   done();
 }
@@ -1606,7 +1634,7 @@ function closeMap(keepView){
 function showLib(){ closeMap(); $('#mapView').hidden=true; $('#sheetWrap').hidden=true; $('#lib').hidden=false; renderLibrary(); }
 $('#backBtn').onclick=()=>{ if(history.state&&history.state.map) history.back(); else showLib(); };
 window.addEventListener('popstate',()=>{ if(!$('#modal').hidden){ $('#modal').hidden=true; } if(!$('#sheetWrap').hidden){ $('#sheetWrap').hidden=true; return; } if(!$('#mapView').hidden) showLib(); });
-$('#fitBtn').onclick=()=>{ if(view.meta){ setFollow(false); view.map.fitBounds(view.meta.bounds,{padding:[20,20]}); } };
+$('#fitBtn').onclick=()=>{ if(!view.meta) return; if(view.meta.kind==='base'){ if(gps.pos){ setFollow(true); view.map.setView([gps.pos.lat,gps.pos.lng],Math.max(view.map.getZoom(),16)); } else toast('Esperando GPS…'); return; } setFollow(false); view.map.fitBounds(view.meta.bounds,{padding:[20,20]}); };
 
 const STYLE_KEYS=new Set(['stroke','stroke-width','stroke-opacity','fill','fill-opacity','styleUrl','styleHash','styleMapHash','marker-color','marker-symbol','marker-size','icon','icon-scale','icon-color','icon-opacity','label-scale','visibility','_capa']);
 function featPopup(f){
@@ -1665,7 +1693,7 @@ function updateHUD(){
   const bits=[`±${p.acc.toFixed(0)} m`];
   if(p.alt!=null) bits.push(`${p.alt.toFixed(0)} msnm`);
   if((p.speed||0)>0.5){ bits.push(`${(p.speed*3.6).toFixed(1)} km/h`); if(p.head!=null&&!isNaN(p.head)) bits.push(`rumbo ${p.head.toFixed(0)}° ${cardinal(p.head)}`); }
-  if(view.meta){ const d=distToBounds(p.lat,p.lng,view.meta.bounds);
+  if(view.meta && view.meta.kind!=='base'){ const d=distToBounds(p.lat,p.lng,view.meta.bounds);
     if(d>0) bits.push(`<span class="out">Fuera del mapa · ${fmtDist(d)}</span>`);
     else { const v=valueAt(p.lat,p.lng); if(view.data&&view.data.values) bits.push(v!=null?`Valor aquí: <span class="val">${fmtNum(v)}</span>`:'Sin datos aquí'); } }
   $('#hudInfo').innerHTML=bits.join('<span>·</span>');
@@ -1900,7 +1928,7 @@ async function openSheet(){
   const op=(m.style&&m.style.opacity)??1;
   let html=`<div class="grab"></div><h3>Mapa</h3>
     <div class="row"><div class="grow"><b>${esc(m.name)}</b><div class="sub">${esc(m.info)}</div></div></div>
-    <div class="row"><span class="sub" style="width:80px">Opacidad</span><input type="range" id="opR" min="0.1" max="1" step="0.05" value="${op}"><span id="opV" class="sub" style="width:40px;text-align:right">${Math.round(op*100)}%</span></div>`;
+    ${m.kind==='base'?'':`<div class="row"><span class="sub" style="width:80px">Opacidad</span><input type="range" id="opR" min="0.1" max="1" step="0.05" value="${op}"><span id="opV" class="sub" style="width:40px;text-align:right">${Math.round(op*100)}%</span></div>`}`;
   if(m.legend){
     html+=`<h3>Leyenda</h3>`;
     if(m.legend.type==='classes') html+=`<div class="legend">${m.legend.items.map(i=>`<div class="it"><span class="sw" style="background:${i.color}"></span>${fmtNum(i.v)}</div>`).join('')}</div>`;
@@ -1911,7 +1939,8 @@ async function openSheet(){
         <div class="sub">Toca el mapa para ver el valor de cualquier punto.</div>`;
     }
   }
-  html+=`<h3>Fondo</h3><div class="seg" id="baseSeg"><button data-v="0" class="${lsGet('basemap',false)?'':'sel'}">Sin fondo</button><button data-v="1" class="${lsGet('basemap',false)?'sel':''}">Satélite (con internet)</button></div>`;
+  html+=`<h3>Mapa base (QuickMap)</h3><div class="bases" id="baseSeg">${Object.entries(BASEMAPS).map(([k,b])=>`<button data-v="${k}" class="${curBase()===k?'sel':''}">${esc(b.name)}</button>`).join('')}</div>
+    <div class="sub" style="margin-top:6px">Necesita internet. Las zonas que veas con señal quedan guardadas y se ven después sin señal.</div>`;
   const others=(await dbAll('maps')).filter(x=>x.id!==m.id);
   if(others.length){ html+=`<h3>Superponer otros mapas</h3>`+others.map(o=>`<label class="row"><input type="checkbox" class="check" data-ov="${o.id}" ${view.extra[o.id]?'checked':''}><div class="grow">${esc(o.name)}<div class="sub">${esc(o.ext.toUpperCase())} · ${esc(o.info)}</div></div></label>`).join(''); }
   const feats=view.feats||[];
@@ -1929,16 +1958,17 @@ async function openSheet(){
   html+=`<h3>Exportar</h3><div class="btns"><button class="btn" data-exp="kmz">KMZ con fotos</button><button class="btn" data-exp="csv">Excel (CSV)</button><button class="btn" data-exp="geojson">GeoJSON</button></div>`;
   sh.innerHTML=html; $('#sheetWrap').hidden=false;
 
-  const opR=$('#opR'); opR.oninput=()=>{ const v=+opR.value; $('#opV').textContent=Math.round(v*100)+'%'; setOpacity(v); };
-  opR.onchange=()=>{ m.style=m.style||{}; m.style.opacity=+opR.value; dbPut('maps',m); };
+  const opR=$('#opR'); if(opR) opR.oninput=()=>{ const v=+opR.value; $('#opV').textContent=Math.round(v*100)+'%'; setOpacity(v); };
+  if(opR) opR.onchange=()=>{ m.style=m.style||{}; m.style.opacity=+opR.value; dbPut('maps',m); };
   const rs=$('#rampSel'); if(rs){ const re=async()=>{ m.style.ramp=rs.value; m.style.invert=$('#invChk').checked; await restyle(); openSheet(); }; rs.onchange=re; $('#invChk').onchange=re; }
-  sh.querySelectorAll('#baseSeg button').forEach(b=>b.onclick=()=>{ setBasemap(b.dataset.v==='1'); sh.querySelectorAll('#baseSeg button').forEach(x=>x.classList.toggle('sel',x===b)); if(b.dataset.v==='1'&&!navigator.onLine) toast('Sin internet: el fondo satelital no cargará'); });
+  sh.querySelectorAll('#baseSeg button').forEach(b=>b.onclick=()=>{ setBasemap(b.dataset.v); sh.querySelectorAll('#baseSeg button').forEach(x=>x.classList.toggle('sel',x===b)); if(m.kind==='base') $('#mapSub').textContent=BASEMAPS[b.dataset.v].name+' · requiere internet'; if(b.dataset.v!=='none'&&!navigator.onLine) toast('Sin internet: solo se verán las zonas ya guardadas'); });
   sh.querySelectorAll('[data-ov]').forEach(ch=>ch.onchange=()=>toggleOverlay(ch.dataset.ov, ch.checked));
   sh.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>{ const f=feats.find(x=>x.id===b.dataset.go); $('#sheetWrap').hidden=true; setFollow(false);
     if(f.kind==='pin'){ view.map.setView([f.lat,f.lng],Math.max(view.map.getZoom(),18)); f._l.openPopup(); } else view.map.fitBounds(f._l.getBounds(),{padding:[40,40]}); });
   sh.querySelectorAll('[data-exp]').forEach(b=>b.onclick=()=>exportFeats(m,b.dataset.exp));
 }
 function setOpacity(v){
+  if(!view.main) return;
   view.main.eachLayer(l=>{ if(l.setOpacity) l.setOpacity(v); else if(l.eachLayer) l.eachLayer(x=>{ if(x.setStyle){ const p=(x.feature&&x.feature.properties)||{}; x.setStyle({ opacity:(p['stroke-opacity']??1)*v, fillOpacity:x.feature&&x.feature.geometry.type.includes('Point')?v:(p['fill-opacity']??0.22)*v }); } }); });
 }
 async function restyle(){
