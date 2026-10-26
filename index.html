@@ -1374,7 +1374,7 @@ async function importPDF(name, buf){
   const [bx1,by1,bx2,by2]=geo.bbox, g=geo.gpts, l=geo.lpts, n=Math.min(g.length,l.length)/2;
   let lat0=0,lon0=0; for(let i=0;i<n;i++){ lat0+=g[2*i]/n; lon0+=g[2*i+1]/n; }
   let def=(geo.epsg&&epsgToDef(geo.epsg))||crsFromWKT(geo.wkt);
-  if(!def||def===WGS||def==='EPSG:3857'){ const z=Math.floor((lon0+180)/6)+1; def=`+proj=utm +zone=${z}${lat0<0?' +south':''} +datum=WGS84 +units=m +no_defs`; }
+  if(!def||def===WGS||def==='EPSG:3857'){ const z=(lat0>13&&lat0<18.5&&lon0>-92.6&&lon0<-88)?15:Math.floor((lon0+180)/6)+1; def=`+proj=utm +zone=${z}${lat0<0?' +south':''} +datum=WGS84 +units=m +no_defs`; }
   const fwd=proj4(WGS,def), src=[], dst=[];
   for(let i=0;i<n;i++){ const px=bx1+l[2*i]*(bx2-bx1), py=by1+l[2*i+1]*(by2-by1);
     src.push(vp.convertToViewportPoint(px,py)); dst.push(fwd.forward([g[2*i+1], g[2*i]])); }
@@ -1557,7 +1557,7 @@ function onPos(p){
    VISOR
    ========================================================= */
 const view={ map:null, meta:null, data:null, main:null, extra:{}, feats:null, featLayer:null, me:null, acc:null, follow:false,
-             base:null, tr:null, coordFmt:lsGet('coordFmt','ll'), urls:[], mode:null };
+             base:null, tr:null, coordFmt:'utm15', urls:[], mode:null };
 function initMap(){
   const m=L.map('map',{ zoomControl:false, preferCanvas:true, maxZoom:22, zoomSnap:.25, wheelPxPerZoomLevel:90, attributionControl:true });
   m.attributionControl.setPrefix(false);
@@ -1664,7 +1664,25 @@ function valueAt(lat,lng){
   if(c<0||r<0||c>=v.w||r>=v.h) return null;
   const x=v.data[r*v.w+c]; return isValidFn(v.nodata)(x)?x:null;
 }
-function coordText(lat,lng){ return view.coordFmt==='utm' ? utmOf(lat,lng) : `${lat.toFixed(6)}, ${lng.toFixed(6)}`; }
+/* ---------- Región: Guatemala ---------- */
+const GT_BOX=[13.6,-92.4,17.9,-88.1];          // límites aprox. del país con margen
+const inGuatemala=(lat,lng)=>lat>=GT_BOX[0]&&lat<=GT_BOX[2]&&lng>=GT_BOX[1]&&lng<=GT_BOX[3];
+const GT_DEFS={
+  utm15:'+proj=utm +zone=15 +datum=WGS84 +units=m +no_defs',
+  utm16:'+proj=utm +zone=16 +datum=WGS84 +units=m +no_defs',
+  gtm:'+proj=tmerc +lat_0=0 +lon_0=-90.5 +k=0.9998 +x_0=500000 +y_0=0 +ellps=WGS84 +towgs84=0,0,0 +units=m +no_defs',
+};
+const COORD_FMTS={ utm15:'UTM 15N (WGS 84)', gtm:'GTM (Guatemala)', utm16:'UTM 16N (WGS 84)', ll:'Lat/Lon decimal', dms:'Lat/Lon grados° min′ seg″' };
+function gtXY(fmt,lat,lng){ const p=proj4(WGS,GT_DEFS[fmt],[lng,lat]); return p; }
+function dms(v,pos,neg){ const a=Math.abs(v), d=Math.floor(a), m=Math.floor((a-d)*60), s=((a-d)*60-m)*60; return `${d}°${String(m).padStart(2,'0')}′${s.toFixed(2).padStart(5,'0')}″${v>=0?pos:neg}`; }
+function coordAs(fmt,lat,lng){
+  if(fmt==='ll') return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+  if(fmt==='dms') return `${dms(lat,'N','S')} ${dms(lng,'E','O')}`;
+  const p=gtXY(fmt,lat,lng), tag=fmt==='gtm'?'GTM':fmt==='utm16'?'16N':'15N';
+  return `${tag} ${p[0].toFixed(0)} E · ${p[1].toFixed(0)} N`;
+}
+function coordText(lat,lng){ return coordAs(view.coordFmt,lat,lng); }
+view.coordFmt=(f=>COORD_FMTS[f]?f:'utm15')(lsGet('coordFmt','utm15'));
 function onMapClick(e){
   if(view.suppress && Date.now()-view.suppress<800) return;
   if(view.mode==='measure'){ addVertex(e.latlng); return; }
@@ -1691,6 +1709,7 @@ function updateHUD(){
   if(!gps.pos){ $('#hudCoord').textContent=gps.err?$('#libGps').textContent:'Esperando GPS…'; $('#hudInfo').innerHTML=''; return; }
   const p=gps.pos; $('#hudCoord').textContent=coordText(p.lat,p.lng);
   const bits=[`±${p.acc.toFixed(0)} m`];
+  if(!inGuatemala(p.lat,p.lng)) bits.unshift(`<span class="out">GPS fuera de Guatemala — revisa la señal</span>`);
   if(p.alt!=null) bits.push(`${p.alt.toFixed(0)} msnm`);
   if((p.speed||0)>0.5){ bits.push(`${(p.speed*3.6).toFixed(1)} km/h`); if(p.head!=null&&!isNaN(p.head)) bits.push(`rumbo ${p.head.toFixed(0)}° ${cardinal(p.head)}`); }
   if(view.meta && view.meta.kind!=='base'){ const d=distToBounds(p.lat,p.lng,view.meta.bounds);
@@ -1698,7 +1717,7 @@ function updateHUD(){
     else { const v=valueAt(p.lat,p.lng); if(view.data&&view.data.values) bits.push(v!=null?`Valor aquí: <span class="val">${fmtNum(v)}</span>`:'Sin datos aquí'); } }
   $('#hudInfo').innerHTML=bits.join('<span>·</span>');
 }
-$('#hud').onclick=()=>{ view.coordFmt=view.coordFmt==='utm'?'ll':'utm'; lsSet('coordFmt',view.coordFmt); updateHUD(); toast(view.coordFmt==='utm'?'Coordenadas UTM':'Coordenadas lat/lon'); };
+$('#hud').onclick=()=>{ const ks=Object.keys(COORD_FMTS); view.coordFmt=ks[(ks.indexOf(view.coordFmt)+1)%ks.length]; lsSet('coordFmt',view.coordFmt); updateHUD(); toast('Coordenadas: '+COORD_FMTS[view.coordFmt]); };
 function setFollow(on){ view.follow=on; $('#fabFollow').classList.toggle('on',on); }
 $('#fabFollow').onclick=()=>{
   if(!gps.pos){ startGPS(); toast(gps.err&&gps.err.code===1?'Permite el acceso a la ubicación en el navegador':'Buscando señal GPS…'); return; }
@@ -1799,7 +1818,7 @@ function pinForm(title, f, isNew){ return modal((c,close)=>{
   if(isNew && !attrs.length) attrs=(lsGet('attrKeys_'+cat,[])).map(k=>({k,v:''}));
   const urls=[];
   const catBtns=()=>CATS.map(k=>`<button type="button" data-cat="${k.id}" class="catb${k.id===cat?' sel':''}" style="--c:${k.color}"><span>${k.ico}</span>${esc(k.name)}</button>`).join('');
-  c.innerHTML=`<h2>${esc(title)}</h2><p class="mono" style="margin-bottom:6px">${f.lat.toFixed(6)}, ${f.lng.toFixed(6)}<br>UTM ${utmOf(f.lat,f.lng)}</p>
+  c.innerHTML=`<h2>${esc(title)}</h2><p class="mono" style="margin-bottom:6px">${coordAs('utm15',f.lat,f.lng)}<br>${coordAs('gtm',f.lat,f.lng)}<br>${coordAs('ll',f.lat,f.lng)}</p>
     <div class="field"><span>Tipo de punto</span><div class="cats" id="pc">${catBtns()}</div></div>
     <label class="field"><span>Nombre</span><input id="pn" value="${esc(f.name)}"></label>
     <label class="field"><span>Descripción</span><textarea id="pt" placeholder="Ej. foco de maleza, trampa revisada, boquilla tapada…">${esc(f.note||'')}</textarea></label>
@@ -1859,7 +1878,7 @@ async function startRec(){
   toast('Grabando. Mantén la pantalla encendida.',3500);
 }
 function recPoint(force){
-  if(!rec.on||!gps.pos) return; const p=gps.pos; if(p.acc>40 && !force) return;
+  if(!rec.on||!gps.pos) return; const p=gps.pos; if((p.acc>40 || !inGuatemala(p.lat,p.lng)) && !force) return;
   const last=rec.pts[rec.pts.length-1];
   if(force || !last || L.latLng(last).distanceTo([p.lat,p.lng])>=Math.max(3,p.acc/3)){
     rec.pts.push([p.lat,p.lng]); rec.alts.push(p.alt!=null&&isFinite(p.alt)?+p.alt.toFixed(1):null); rec.times.push(Date.now()); rec.line.addLatLng([p.lat,p.lng]); }
@@ -1939,6 +1958,8 @@ async function openSheet(){
         <div class="sub">Toca el mapa para ver el valor de cualquier punto.</div>`;
     }
   }
+  html+=`<h3>Coordenadas (Guatemala)</h3><div class="bases" id="crdSeg">${Object.entries(COORD_FMTS).map(([k,n])=>`<button data-c="${k}" class="${view.coordFmt===k?'sel':''}">${esc(n)}</button>`).join('')}</div>
+    <div class="sub" style="margin-top:6px">UTM 15N cubre todo el país sin cambiar de zona al cruzar −90°. Usa el mismo sistema que tus mapas de QGIS.</div>`;
   html+=`<h3>Mapa base (QuickMap)</h3><div class="bases" id="baseSeg">${Object.entries(BASEMAPS).map(([k,b])=>`<button data-v="${k}" class="${curBase()===k?'sel':''}">${esc(b.name)}</button>`).join('')}</div>
     <div class="sub" style="margin-top:6px">Necesita internet. Las zonas que veas con señal quedan guardadas y se ven después sin señal.</div>`;
   const others=(await dbAll('maps')).filter(x=>x.id!==m.id);
@@ -1961,6 +1982,7 @@ async function openSheet(){
   const opR=$('#opR'); if(opR) opR.oninput=()=>{ const v=+opR.value; $('#opV').textContent=Math.round(v*100)+'%'; setOpacity(v); };
   if(opR) opR.onchange=()=>{ m.style=m.style||{}; m.style.opacity=+opR.value; dbPut('maps',m); };
   const rs=$('#rampSel'); if(rs){ const re=async()=>{ m.style.ramp=rs.value; m.style.invert=$('#invChk').checked; await restyle(); openSheet(); }; rs.onchange=re; $('#invChk').onchange=re; }
+  sh.querySelectorAll('#crdSeg button').forEach(b=>b.onclick=()=>{ view.coordFmt=b.dataset.c; lsSet('coordFmt',b.dataset.c); sh.querySelectorAll('#crdSeg button').forEach(x=>x.classList.toggle('sel',x===b)); updateHUD(); });
   sh.querySelectorAll('#baseSeg button').forEach(b=>b.onclick=()=>{ setBasemap(b.dataset.v); sh.querySelectorAll('#baseSeg button').forEach(x=>x.classList.toggle('sel',x===b)); if(m.kind==='base') $('#mapSub').textContent=BASEMAPS[b.dataset.v].name+' · requiere internet'; if(b.dataset.v!=='none'&&!navigator.onLine) toast('Sin internet: solo se verán las zonas ya guardadas'); });
   sh.querySelectorAll('[data-ov]').forEach(ch=>ch.onchange=()=>toggleOverlay(ch.dataset.ov, ch.checked));
   sh.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>{ const f=feats.find(x=>x.id===b.dataset.go); $('#sheetWrap').hidden=true; setFollow(false);
@@ -2020,9 +2042,9 @@ async function exportFeats(m, fmt){
     const pins=feats.filter(f=>f.kind==='pin'); if(!pins.length){ toast('No hay puntos para exportar'); return; }
     const keys=[...new Set(pins.flatMap(f=>(f.attrs||[]).map(a=>a.k).filter(Boolean)))];
     const q=v=>{ v=v==null?'':String(v); return /[",;\n]/.test(v)?`"${v.replace(/"/g,'""')}"`:v; };
-    const head=['nombre','categoria','latitud','longitud','utm_zona','utm_este','utm_norte','altitud_m','precision_m','descripcion','fotos','fecha',...keys];
-    const rows=pins.map(f=>{ const z=Math.floor((f.lng+180)/6)+1, u=proj4(WGS,`+proj=utm +zone=${z}${f.lat<0?' +south':''} +datum=WGS84 +units=m +no_defs`,[f.lng,f.lat]), am=attrMap(f);
-      return [f.name, catOf(f.cat).name, f.lat.toFixed(7), f.lng.toFixed(7), `${z}${f.lat<0?'S':'N'}`, u[0].toFixed(1), u[1].toFixed(1), f.alt??'', f.acc??'', f.note||'', (f.photos||[]).length, fecha(f.t), ...keys.map(k=>am[k]??'')].map(q).join(','); });
+    const head=['nombre','categoria','latitud','longitud','utm15n_este','utm15n_norte','gtm_x','gtm_y','altitud_m','precision_m','descripcion','fotos','fecha',...keys];
+    const rows=pins.map(f=>{ const u=gtXY('utm15',f.lat,f.lng), g=gtXY('gtm',f.lat,f.lng), am=attrMap(f);
+      return [f.name, catOf(f.cat).name, f.lat.toFixed(7), f.lng.toFixed(7), u[0].toFixed(1), u[1].toFixed(1), g[0].toFixed(1), g[1].toFixed(1), f.alt??'', f.acc??'', f.note||'', (f.photos||[]).length, fecha(f.t), ...keys.map(k=>am[k]??'')].map(q).join(','); });
     return saveOrShare(new Blob(['﻿'+[head.join(','),...rows].join('\r\n')],{type:'text/csv'}), `${safe}_puntos.csv`);
   }
   // KMZ (KML + fotos)

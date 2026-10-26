@@ -6,6 +6,9 @@ App: https://cobocuburjosue-glitch.github.io/MAPAS-CAMPO/
 ## 1. Mapas sin internet
 Los mapas se importan una vez y quedan guardados en el teléfono.
 
+## Región: Guatemala
+Coordenadas por defecto en **UTM 15N (WGS 84)**, que cubre todo el país sin saltar a zona 16 al cruzar −90°. También: GTM, UTM 16N, lat/lon decimal y grados-min-seg (toca la barra negra o cámbialo en el botón de capas). Si el GPS da una posición fuera de Guatemala la app avisa y no la usa en los recorridos. El CSV exporta UTM 15N y GTM.
+
 ## 2. GPS en tiempo real
 Punto azul con flecha de dirección al moverte. La barra inferior muestra coordenadas (toca para cambiar lat/lon ↔ UTM), precisión, altitud, velocidad, rumbo y el valor del ráster donde estás.
 
