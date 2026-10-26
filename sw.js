@@ -1,6 +1,6 @@
 /* Service worker: guarda la app en el teléfono para que abra sin internet */
-const CACHE = 'mapas-de-campo-v1';
-const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
+const CACHE = 'mapas-de-campo-v2';
+const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './pdf.min.js', './pdf.worker.min.js'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));

@@ -810,6 +810,18 @@ input,select,textarea{font:inherit}
 @keyframes spin{to{transform:rotate(360deg)}}
 #busy p{margin:0;font-weight:600;color:var(--muted);text-align:center;padding:0 24px}
 
+.cats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.catb{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 4px;border:2px solid var(--line);border-radius:12px;font-size:11.5px;font-weight:600;line-height:1.15;text-align:center;color:var(--muted);min-height:62px;justify-content:center}
+.catb span{font-size:20px}
+.catb.sel{border-color:var(--c);background:color-mix(in srgb,var(--c) 12%,#fff);color:var(--ink)}
+.phs{display:flex;gap:8px;overflow-x:auto;padding:2px 0}
+.ph{position:relative;flex:none}
+.ph img{width:76px;height:76px;object-fit:cover;border-radius:10px;display:block}
+.ph button{position:absolute;top:-6px;right:-6px;width:24px;height:24px;border-radius:50%;background:#16181a;color:#fff;font-size:15px;line-height:1}
+.attr{display:flex;gap:6px;margin-bottom:6px}
+.attr input{flex:1;min-width:0;border:1px solid var(--line);border-radius:10px;padding:9px 10px;background:#fbfaf8}
+.attr button{width:36px;flex:none;border-radius:10px;background:#eeebe5;font-size:18px}
+label.btn{cursor:pointer}
 .leaflet-popup-content{margin:12px 14px;font-size:14px;line-height:1.4}
 .leaflet-popup-content table{border-collapse:collapse;font-size:13px}
 .leaflet-popup-content td{padding:2px 6px 2px 0;vertical-align:top}
@@ -835,7 +847,7 @@ input,select,textarea{font:inherit}
   <div id="empty" class="empty" hidden>
     <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#9a958b" stroke-width="1.5"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z"/><path d="M9 4v14M15 6v14"/></svg>
     <h2>Aún no hay mapas</h2>
-    <p>Importa un GeoTIFF exportado de QGIS, un KML/KMZ, GeoJSON, GPX o un shapefile comprimido en .zip. Se guarda en el teléfono y lo puedes abrir sin internet.</p>
+    <p>Importa un GeoPDF o GeoTIFF exportado de QGIS, un JPG georreferenciado (selecciónalo junto con su .jgw/.wld), KML/KMZ, GPX, GeoJSON o shapefile. Se guarda en el teléfono y lo puedes abrir sin internet.</p>
   </div>
   <label class="import-btn">
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -1010,29 +1022,45 @@ function askCRS(fileName, detail){ return modal((c,close)=>{
    IMPORTACIÓN
    ========================================================= */
 $('#fileIn').addEventListener('change', async e=>{
-  const files=[...e.target.files]; e.target.value='';
-  for(const f of files){
-    try{ await busy(`Importando ${f.name}…`); await importFile(f); toast(`“${f.name}” listo para usar sin internet`); }
+  const files=groupFiles([...e.target.files]); e.target.value='';
+  for(const {file:f, side} of files){
+    try{ await busy(`Importando ${f.name}…`); await importFile(f, side); toast(`“${f.name}” listo para usar sin internet`); }
     catch(err){ console.error(err); done(); await modal((c,close)=>{ c.innerHTML=`<h2>No se pudo importar</h2><p><b>${esc(f.name)}</b><br>${esc(err.message||err)}</p><div class="btns"><button class="btn pri">Entendido</button></div>`; c.querySelector('button').onclick=()=>close(); }); }
   }
   done(); renderLibrary();
   try{ if(navigator.storage&&navigator.storage.persist) navigator.storage.persist(); }catch(e){}
 });
 
-async function importFile(file){
+/* Archivos acompañantes (.jgw, .wld, .prj, .aux.xml, .dbf…) se agrupan con su archivo principal */
+const SIDE_RE=/\.(jgw|jpgw|jpegw|pgw|pngw|wld|tfw|tifw|prj|aux\.xml|dbf|shx|cpg|qmd|sbn|sbx|xml)$/i;
+function groupFiles(list){
+  const sides=list.filter(f=>SIDE_RE.test(f.name)), mains=list.filter(f=>!SIDE_RE.test(f.name));
+  const stem=n=>n.replace(/\.aux\.xml$/i,'').replace(/\.[^.]+$/,'').replace(/\.(jpe?g|png|tiff?)$/i,'').toLowerCase();
+  const out=mains.map(file=>{ const s={}; const st=stem(file.name);
+    sides.filter(x=>stem(x.name)===st).forEach(x=>{ const n=x.name.toLowerCase();
+      if(/\.aux\.xml$/.test(n)) s.aux=x; else if(/\.prj$/.test(n)) s.prj=x; else if(/\.dbf$/.test(n)) s.dbf=x; else if(/\.cpg$/.test(n)) s.cpg=x;
+      else if(/w$/.test(n)||/\.wld$/.test(n)) s.world=x; });
+    return { file, side:s }; });
+  if(!mains.length && sides.length) toast('Selecciona también el archivo principal (imagen o .shp), no solo sus acompañantes.',4500);
+  return out;
+}
+const readText = f => f ? f.text() : Promise.resolve(null);
+
+async function importFile(file, side={}){
   const ext=(file.name.split('.').pop()||'').toLowerCase();
   const base=file.name.replace(/\.[^.]+$/,'');
   const buf=await file.arrayBuffer();
   let rec;
-  if(ext==='tif'||ext==='tiff'||ext==='gtiff') rec=await importTiff(file.name, buf);
+  if(ext==='tif'||ext==='tiff'||ext==='gtiff') rec=await importTiff(file.name, buf, side);
+  else if(ext==='jpg'||ext==='jpeg'||ext==='png') rec=await importImage(file.name, new Blob([buf],{type:file.type||(ext==='png'?'image/png':'image/jpeg')}), await readText(side.world), await readText(side.aux), await readText(side.prj));
+  else if(ext==='pdf') rec=await importPDF(file.name, buf);
   else if(ext==='kml') rec=vectorRec(toGeoJSON.kml(parseXML(new TextDecoder().decode(buf))));
   else if(ext==='gpx') rec=vectorRec(toGeoJSON.gpx(parseXML(new TextDecoder().decode(buf))));
   else if(ext==='kmz') rec=await importKMZ(buf);
   else if(ext==='geojson'||ext==='json') rec=vectorRec(await geojsonFromText(new TextDecoder().decode(buf)));
   else if(ext==='zip') rec=await importZip(buf);
-  else if(ext==='shp') throw new Error('Un .shp solo no basta: comprime en un .zip el .shp junto con su .dbf, .shx y .prj, e importa el .zip.');
-  else if(ext==='pdf') throw new Error('Los GeoPDF todavía no son compatibles. En QGIS exporta el mapa como imagen georreferenciada (Proyecto ▸ Importar/Exportar ▸ Exportar mapa a imagen, con “Agregar información de georreferencia”) o como GeoTIFF.');
-  else throw new Error('Formato no compatible. Usa .tif, .kml, .kmz, .geojson, .gpx o .zip (shapefile).');
+  else if(ext==='shp') rec=await importLooseShp(buf, side);
+  else throw new Error('Formato no compatible. Usa GeoPDF (.pdf), GeoTIFF (.tif), JPG/PNG con su .jgw/.wld, .kml, .kmz, .geojson, .gpx o shapefile.');
   if(rec.kind==='vector'){
     const imgs=await Promise.all(rec.data.overlays.map(async o=>({ img:await loadImg(o.blob), bounds:o.bounds })));
     rec.thumb=await thumbFromVector(rec.data.geojson, imgs, rec.bounds);
@@ -1071,7 +1099,7 @@ function crsFromKeys(gk, origin, res){
   return {def:null, why:'sin claves de proyección'};
 }
 
-async function importTiff(name, buf){
+async function importTiff(name, buf, side={}){
   const tiff=await GeoTIFF.fromArrayBuffer(buf);
   const img=await tiff.getImage();
   const W=img.getWidth(), H=img.getHeight();
@@ -1128,12 +1156,16 @@ async function importTiff(name, buf){
 }
 
 /* Reproyecta un ráster a Web Mercator, píxel por píxel (malla de control + interpolación bilineal). */
+/* gt: {x0,y0,rx,ry} (sin rotación) o afín completa {a,b,c,d,e,f}: X=a+b·col+c·fila, Y=d+e·col+f·fila */
 function warp(w,h,gt,def,pix){
   const fwd=proj4(WGS,def), inv=proj4(def,WGS);
+  const A = gt.a!==undefined ? gt : { a:gt.x0, b:gt.rx, c:0, d:gt.y0, e:0, f:gt.ry };
+  const det=A.b*A.f-A.c*A.e;
+  if(!det||!isFinite(det)) throw new Error('La georreferencia del archivo no es válida.');
   let mx0=Infinity,my0=Infinity,mx1=-Infinity,my1=-Infinity; const N=32;
   for(let i=0;i<=N;i++){ const t=i/N;
     for(const [c,r] of [[t*w,0],[t*w,h],[0,t*h],[w,t*h]]){
-      const p=inv.forward([gt.x0+c*gt.rx, gt.y0+r*gt.ry]); if(!isFinite(p[0])||!isFinite(p[1])) continue;
+      const p=inv.forward([A.a+A.b*c+A.c*r, A.d+A.e*c+A.f*r]); if(!isFinite(p[0])||!isFinite(p[1])) continue;
       const m=ll2merc(p[0],p[1]); if(m[0]<mx0)mx0=m[0]; if(m[0]>mx1)mx1=m[0]; if(m[1]<my0)my0=m[1]; if(m[1]>my1)my1=m[1]; } }
   if(!isFinite(mx0)) throw new Error('No se pudieron calcular las coordenadas. Revisa el sistema de coordenadas.');
   const aspect=(mx1-mx0)/(my1-my0), base=Math.min(4096, Math.max(w,h)*1.05);
@@ -1142,7 +1174,8 @@ function warp(w,h,gt,def,pix){
   const sx=(mx1-mx0)/ow, sy=(my1-my0)/oh;
   for(let gy=0;gy<gh;gy++) for(let gx=0;gx<gw;gx++){
     const ll=merc2ll(mx0+(gx*S+.5)*sx, my1-(gy*S+.5)*sy); const p=fwd.forward(ll), k=gy*gw+gx;
-    gc[k]=(p[0]-gt.x0)/gt.rx; gr[k]=(p[1]-gt.y0)/gt.ry; }
+    const X=p[0]-A.a, Y=p[1]-A.d;
+    gc[k]=(A.f*X-A.c*Y)/det; gr[k]=(-A.e*X+A.b*Y)/det; }
   const cv=document.createElement('canvas'); cv.width=ow; cv.height=oh;
   const ctx=cv.getContext('2d'), id=ctx.createImageData(ow,oh), o=id.data;
   for(let y=0;y<oh;y++){ const gy=(y/S)|0, fy=(y-gy*S)/S;
@@ -1198,6 +1231,162 @@ async function thumbFromCanvas(src){
   return canvasToBlob(cv,'image/jpeg',.8);
 }
 
+/* ---------- sistema de coordenadas desde WKT (.prj / .aux.xml / GeoPDF) ---------- */
+function crsFromWKT(wkt){
+  if(!wkt) return null; wkt=wkt.trim();
+  const au=[...wkt.matchAll(/AUTHORITY\s*\[\s*"EPSG"\s*,\s*"?(\d+)"?\s*\]|ID\s*\[\s*"EPSG"\s*,\s*(\d+)\s*\]/gi)];
+  if(au.length){ const last=au[au.length-1]; const d=epsgToDef(+(last[1]||last[2])); if(d) return d; }
+  const z=wkt.match(/UTM[ _]zone[ _](\d+)\s*([NS])?/i);
+  if(z && /WGS[ _]?(19)?84/i.test(wkt)) return `+proj=utm +zone=${z[1]}${(z[2]||'N').toUpperCase()==='S'?' +south':''} +datum=WGS84 +units=m +no_defs`;
+  try{ proj4(WGS,wkt,[-90.5,14.5]); return wkt; }catch(e){ return null; }
+}
+const looksGeographic = (x,y,px) => Math.abs(x)<=180 && Math.abs(y)<=90 && Math.abs(px)<1;
+
+/* Ráster RGBA ya decodificado (canvas) → mapa reproyectado */
+async function rgbaToRec(name, canvas, gt, def, info){
+  const w=canvas.width, h=canvas.height, src=canvas.getContext('2d').getImageData(0,0,w,h).data;
+  await busy('Proyectando el mapa…');
+  const out=warp(w,h,gt,def,(i,o,k)=>{ const p=i*4; if(src[p+3]===0) return; o[k]=src[p]; o[k+1]=src[p+1]; o[k+2]=src[p+2]; o[k+3]=255; });
+  return { kind:'raster', bounds:out.bounds, info, style:{ opacity:1 }, thumb:await thumbFromCanvas(out.canvas), data:{ png:await canvasToBlob(out.canvas) } };
+}
+function scaleGT(A, s){ return { a:A.a, b:A.b*s, c:A.c*s, d:A.d, e:A.e*s, f:A.f*s }; }
+
+/* ---------- JPG / PNG georreferenciado (archivo de mundo o .aux.xml) ---------- */
+async function importImage(name, blob, worldTxt, auxTxt, prjTxt){
+  let A=null, wkt=prjTxt||null;
+  if(auxTxt){ try{ const x=parseXML(auxTxt);
+      const g=x.querySelector('GeoTransform'); if(g){ const v=g.textContent.split(',').map(Number); if(v.length===6&&v.every(isFinite)) A={a:v[0],b:v[1],c:v[2],d:v[3],e:v[4],f:v[5]}; }
+      const s=x.querySelector('SRS'); if(s&&!wkt) wkt=s.textContent; }catch(e){} }
+  if(!A && worldTxt){ const v=worldTxt.trim().split(/\s+/).map(Number);
+    if(v.length>=6 && v.slice(0,6).every(isFinite)){ const [pa,pd,pb,pe,pc,pf]=v; A={ a:pc-pa/2-pb/2, b:pa, c:pb, d:pf-pd/2-pe/2, e:pd, f:pe }; } }
+  if(!A) throw new Error('Esta imagen no trae georreferencia. Selecciona la imagen junto con su archivo de mundo (.jgw, .pgw o .wld) y, si lo tienes, su .prj o .aux.xml. También puedes meterlos juntos en un .zip.');
+  let def=crsFromWKT(wkt);
+  if(!def){ if(!wkt && looksGeographic(A.a,A.d,A.b)) def=WGS;
+    else { done(); def=await askCRS(name, wkt?'proyección no reconocida':'falta el .prj'); if(!def) throw new Error('Importación cancelada.'); await busy(`Procesando ${name}…`); } }
+  await busy(`Leyendo imagen ${name}…`);
+  const img=await loadImg(blob); const W=img.naturalWidth, H=img.naturalHeight;
+  const s=Math.min(1, 3600/Math.max(W,H)), w=Math.round(W*s), h=Math.round(H*s);
+  const cv=document.createElement('canvas'); cv.width=w; cv.height=h; cv.getContext('2d').drawImage(img,0,0,w,h);
+  URL.revokeObjectURL(img.src);
+  const px=Math.hypot(A.b,A.e);
+  return rgbaToRec(name, cv, scaleGT(A, W/w), def, `${W}×${H} px · ${px.toPrecision(3)} ${def===WGS?'°':'m'}/px · imagen`);
+}
+
+/* ---------- GeoPDF (ISO 32000 / QGIS, ArcGIS, GDAL) ---------- */
+let pdfjsReady=null;
+function loadPdfJs(){
+  if(window.pdfjsLib) return Promise.resolve();
+  if(!pdfjsReady) pdfjsReady=new Promise((res,rej)=>{ const s=document.createElement('script'); s.src='pdf.min.js';
+    s.onload=()=>{ pdfjsLib.GlobalWorkerOptions.workerSrc='pdf.worker.min.js'; res(); };
+    s.onerror=()=>{ pdfjsReady=null; rej(new Error('No se pudo cargar el lector de PDF. Abre la app una vez con internet para que se guarde en el teléfono.')); };
+    document.head.appendChild(s); });
+  return pdfjsReady;
+}
+async function inflate(bytes){
+  const ds=new DecompressionStream('deflate'); const out=new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer();
+  return new Uint8Array(await out);
+}
+const latin1 = u8 => { let s=''; for(let i=0;i<u8.length;i+=32768) s+=String.fromCharCode.apply(null,u8.subarray(i,i+32768)); return s; };
+async function pdfObjects(buf){
+  const u8=new Uint8Array(buf), txt=latin1(u8), objs=new Map();
+  const re=/(\d+)\s+(\d+)\s+obj\b([\s\S]*?)\bendobj/g; let m; const streams=[];
+  while((m=re.exec(txt))){ objs.set(+m[1], m[3]); if(/\/Type\s*\/ObjStm/.test(m[3])) streams.push({ body:m[3], off:m.index+m[0].indexOf(m[3]) }); }
+  // flujos de objetos comprimidos (PDF 1.5+)
+  for(const {body, off} of streams){
+    const sm=body.match(/stream\r?\n/); if(!sm) continue;
+    const start=off+sm.index+sm[0].length; const lenM=body.match(/\/Length\s+(\d+)(?!\s+\d+\s+R)/);
+    let end = lenM ? start+(+lenM[1]) : off+body.lastIndexOf('endstream');
+    while(end>start && (u8[end-1]===10||u8[end-1]===13||u8[end-1]===32)) end--;
+    try{
+      const data=latin1(/FlateDecode/.test(body.slice(0,sm.index)) ? await inflate(u8.subarray(start,end)) : u8.subarray(start,end));
+      const n=+(body.match(/\/N\s+(\d+)/)||[])[1], first=+(body.match(/\/First\s+(\d+)/)||[])[1];
+      const hdr=data.slice(0,first).trim().split(/\s+/).map(Number);
+      for(let i=0;i<n;i++){ const num=hdr[2*i], off=hdr[2*i+1], next=i+1<n?hdr[2*i+3]:data.length-first; objs.set(num, data.slice(first+off, first+next)); }
+    }catch(e){ console.warn('ObjStm',e); }
+  }
+  return objs;
+}
+function pdfNums(s){ return s ? s.trim().split(/\s+/).map(Number).filter(isFinite) : null; }
+function pdfString(s){ return s.replace(/\\([nrtbf()\\]|[0-7]{1,3})/g,(m,c)=>({n:'\n',r:'\r',t:'\t',b:'\b',f:'\f','(':'(',')':')','\\':'\\'}[c] ?? String.fromCharCode(parseInt(c,8)))); }
+function pdfDictAt(s, i){ // devuelve el diccionario << ... >> que empieza en i
+  let d=0; for(let j=i;j<s.length-1;j++){ if(s[j]==='<'&&s[j+1]==='<'){d++;j++;} else if(s[j]==='>'&&s[j+1]==='>'){d--;j++; if(!d) return s.slice(i,j+1);} } return s.slice(i); }
+function pdfResolve(objs, s, key){ // valor de /key: referencia o diccionario en línea
+  const m=s.match(new RegExp('/'+key+'\\s*(?:(\\d+)\\s+\\d+\\s+R|(<<))'));
+  if(!m) return null; if(m[1]) return objs.get(+m[1])||null; return pdfDictAt(s, m.index+m[0].length-2);
+}
+async function parsePdfGeo(buf){
+  const objs=await pdfObjects(buf), vps=[];
+  for(const body of objs.values()){
+    let i=-1;
+    while((i=body.indexOf('/Measure',i+1))>=0){
+      // el /BBox del mismo Viewport: buscar hacia atrás hasta el inicio del diccionario
+      const open=body.lastIndexOf('<<', body.lastIndexOf('/BBox', i)>=0 ? body.lastIndexOf('/BBox', i) : i);
+      const vp=pdfDictAt(body, Math.max(0,open));
+      const bb=vp.match(/\/BBox\s*\[([^\]]+)\]/); if(!bb) continue;
+      const meas=pdfResolve(objs, vp.slice(vp.indexOf('/Measure')), 'Measure'); if(!meas||!/\/GEO\b/.test(meas)) continue;
+      const g=pdfNums((meas.match(/\/GPTS\s*\[([^\]]+)\]/)||[])[1]); if(!g||g.length<6) continue;
+      const l=pdfNums((meas.match(/\/LPTS\s*\[([^\]]+)\]/)||[])[1]) || pdfNums((meas.match(/\/Bounds\s*\[([^\]]+)\]/)||[])[1]) || [0,1,0,0,1,0,1,1];
+      const gcs=pdfResolve(objs, meas, 'GCS')||'';
+      const epsg=+(gcs.match(/\/EPSG\s+(\d+)/)||[])[1]||null;
+      const wm=gcs.match(/\/WKT\s*\(([\s\S]*)\)\s*(?:\/|>>)/); const wkt=wm?pdfString(wm[1]):null;
+      vps.push({ bbox:pdfNums(bb[1]), gpts:g, lpts:l, epsg, wkt });
+    }
+  }
+  if(!vps.length){
+    const any=[...objs.values()].some(b=>/\/LGIDict/.test(b));
+    throw new Error(any ? 'Este PDF usa el formato GeoPDF antiguo (LGIDict) que todavía no se puede leer. En QGIS o ArcGIS vuelve a exportarlo como PDF geoespacial (formato ISO/OGC actual) o como GeoTIFF.'
+                        : 'Este PDF no tiene georreferencia. En QGIS usa “Exportar como PDF” con la opción “Crear PDF geoespacial (GeoPDF)” activada.');
+  }
+  vps.sort((a,b)=>Math.abs((b.bbox[2]-b.bbox[0])*(b.bbox[3]-b.bbox[1]))-Math.abs((a.bbox[2]-a.bbox[0])*(a.bbox[3]-a.bbox[1])));
+  return vps[0];
+}
+function fitAffine(src, dst){ // mínimos cuadrados: dst = a + b·u + c·v
+  const solve=(k)=>{ const M=[[0,0,0],[0,0,0],[0,0,0]], r=[0,0,0];
+    src.forEach(([u,v],i)=>{ const row=[1,u,v], t=dst[i][k]; for(let p=0;p<3;p++){ r[p]+=row[p]*t; for(let q=0;q<3;q++) M[p][q]+=row[p]*row[q]; } });
+    for(let p=0;p<3;p++){ let mx=p; for(let q=p+1;q<3;q++) if(Math.abs(M[q][p])>Math.abs(M[mx][p])) mx=q; [M[p],M[mx]]=[M[mx],M[p]]; [r[p],r[mx]]=[r[mx],r[p]];
+      for(let q=p+1;q<3;q++){ const f=M[q][p]/M[p][p]; for(let z=p;z<3;z++) M[q][z]-=f*M[p][z]; r[q]-=f*r[p]; } }
+    const x=[0,0,0]; for(let p=2;p>=0;p--){ let s=r[p]; for(let q=p+1;q<3;q++) s-=M[p][q]*x[q]; x[p]=s/M[p][p]; } return x; };
+  const X=solve(0), Y=solve(1); return { a:X[0], b:X[1], c:X[2], d:Y[0], e:Y[1], f:Y[2] };
+}
+async function importPDF(name, buf){
+  if(typeof DecompressionStream==='undefined') throw new Error('Este navegador es muy antiguo para leer GeoPDF. Actualiza Chrome o Safari.');
+  await busy(`Leyendo georreferencia de ${name}…`);
+  const geo=await parsePdfGeo(buf.slice(0));
+  await loadPdfJs();
+  await busy(`Dibujando ${name}…`);
+  const pdf=await pdfjsLib.getDocument({ data:new Uint8Array(buf.slice(0)), isEvalSupported:false }).promise;
+  const page=await pdf.getPage(1);
+  const v1=page.getViewport({ scale:1 });
+  const scale=Math.min(3600/Math.max(v1.width,v1.height), 6);
+  const vp=page.getViewport({ scale });
+  const cv=document.createElement('canvas'); cv.width=Math.round(vp.width); cv.height=Math.round(vp.height);
+  const ctx=cv.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,cv.width,cv.height);
+  await page.render({ canvasContext:ctx, viewport:vp }).promise;
+  // puntos de control: página (px) → coordenadas proyectadas
+  const [bx1,by1,bx2,by2]=geo.bbox, g=geo.gpts, l=geo.lpts, n=Math.min(g.length,l.length)/2;
+  let lat0=0,lon0=0; for(let i=0;i<n;i++){ lat0+=g[2*i]/n; lon0+=g[2*i+1]/n; }
+  let def=(geo.epsg&&epsgToDef(geo.epsg))||crsFromWKT(geo.wkt);
+  if(!def||def===WGS||def==='EPSG:3857'){ const z=Math.floor((lon0+180)/6)+1; def=`+proj=utm +zone=${z}${lat0<0?' +south':''} +datum=WGS84 +units=m +no_defs`; }
+  const fwd=proj4(WGS,def), src=[], dst=[];
+  for(let i=0;i<n;i++){ const px=bx1+l[2*i]*(bx2-bx1), py=by1+l[2*i+1]*(by2-by1);
+    src.push(vp.convertToViewportPoint(px,py)); dst.push(fwd.forward([g[2*i+1], g[2*i]])); }
+  const A=fitAffine(src,dst);
+  const mpp=Math.hypot(A.b,A.e);
+  const info=`GeoPDF · ${pdf.numPages>1?`página 1 de ${pdf.numPages} · `:''}${geo.epsg?`EPSG:${geo.epsg} · `:''}${(mpp).toFixed(2)} m/px`;
+  pdf.destroy();
+  return rgbaToRec(name, cv, A, def, info);
+}
+
+/* ---------- shapefile suelto (.shp + .dbf + .prj seleccionados juntos) ---------- */
+async function importLooseShp(buf, side){
+  if(!side.dbf) toast('Sin .dbf: se cargan las formas sin atributos.',4000);
+  const prj=await readText(side.prj);
+  if(!prj) toast('Sin .prj: se asume WGS 84.',4000);
+  const geoms=shp.parseShp(buf, prj||undefined);
+  const gj = side.dbf ? shp.combine([geoms, shp.parseDbf(await side.dbf.arrayBuffer(), side.cpg?await side.cpg.arrayBuffer():undefined)]) : shp.combine([geoms, geoms.map(()=>({}))]);
+  return vectorRec(gj);
+}
+
 /* ---------- vectores ---------- */
 async function geojsonFromText(txt){
   let gj; try{ gj=JSON.parse(txt); }catch(e){ throw new Error('El GeoJSON no es válido.'); }
@@ -1246,7 +1435,20 @@ async function importKMZ(buf){
 async function importZip(buf){
   const zip=await JSZip.loadAsync(buf);
   const names=Object.keys(zip.files);
-  if(!names.some(n=>/\.shp$/i.test(n))) throw new Error('El .zip no contiene un shapefile (.shp).');
+  if(!names.some(n=>/\.shp$/i.test(n))){
+    const imgN=names.find(n=>/\.(jpe?g|png)$/i.test(n)&&!/__MACOSX/.test(n));
+    const pdfN=names.find(n=>/\.pdf$/i.test(n)&&!/__MACOSX/.test(n));
+    const tifN=names.find(n=>/\.tiff?$/i.test(n)&&!/__MACOSX/.test(n));
+    const stem=n=>n.replace(/\.aux\.xml$/i,'').replace(/\.[^.]+$/,'').replace(/\.(jpe?g|png)$/i,'');
+    if(imgN){ const st=stem(imgN), sib=re=>names.find(n=>stem(n)===st&&re.test(n));
+      const t=async n=>n?zip.file(n).async('string'):null;
+      const ext=imgN.split('.').pop().toLowerCase();
+      return importImage(imgN.split('/').pop(), new Blob([await zip.file(imgN).async('arraybuffer')],{type:ext==='png'?'image/png':'image/jpeg'}),
+        await t(sib(/(w|\.wld)$/i)), await t(sib(/\.aux\.xml$/i)), await t(sib(/\.prj$/i))); }
+    if(pdfN) return importPDF(pdfN.split('/').pop(), await zip.file(pdfN).async('arraybuffer'));
+    if(tifN) return importTiff(tifN.split('/').pop(), await zip.file(tifN).async('arraybuffer'));
+    throw new Error('El .zip no contiene un shapefile, imagen georreferenciada, GeoPDF ni GeoTIFF.');
+  }
   if(!names.some(n=>/\.prj$/i.test(n))) toast('El shapefile no trae .prj; se asume WGS 84.',4000);
   let r=await shp(buf);
   if(Array.isArray(r)){ const all={type:'FeatureCollection',features:[]}; r.forEach(fc=>fc.features.forEach(f=>{ f.properties=f.properties||{}; f.properties._capa=fc.fileName; all.features.push(f); })); r=all; }
@@ -1307,13 +1509,14 @@ async function mapMenu(m){
     c.innerHTML=`<h2>${esc(m.name)}</h2><p>${esc(m.file)}<br>${esc(m.info)}</p>
       <button class="opt" data-a="open"><b>Abrir</b></button>
       <button class="opt" data-a="ren"><b>Cambiar nombre</b></button>
-      <button class="opt" data-a="exp"><b>Exportar marcas y recorridos (KML)</b></button>
+      <button class="opt" data-a="exp"><b>Exportar puntos y recorridos</b><span>KMZ con fotos (Google Earth / QGIS)</span></button><button class="opt" data-a="csv"><b>Exportar puntos a Excel (CSV)</b></button>
       <button class="opt" data-a="del" style="color:#b42318"><b>Eliminar del teléfono</b></button>
       <div class="btns" style="margin-top:8px"><button class="btn" data-a="">Cerrar</button></div>`;
     c.querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>close(b.dataset.a)); });
   if(a==='open') openMap(m.id);
   if(a==='ren'){ const n=await promptBox('Cambiar nombre','Nombre del mapa',m.name); if(n){ m.name=n; await dbPut('maps',m); renderLibrary(); } }
-  if(a==='exp') exportFeats(m, 'kml');
+  if(a==='exp') exportFeats(m, 'kmz');
+  if(a==='csv') exportFeats(m, 'csv');
   if(a==='del'){ if(await confirmBox('¿Eliminar mapa?',`Se borrará “${m.name}” y sus marcas y recorridos de este teléfono.`,'Eliminar',true)){
     const fs=await featsOf(m.id); await tx(['maps','data','feats'],'readwrite',t=>{ t.objectStore('maps').delete(m.id); t.objectStore('data').delete(m.id); fs.forEach(f=>t.objectStore('feats').delete(f.id)); });
     renderLibrary(); toast('Mapa eliminado'); } }
@@ -1461,6 +1664,7 @@ function updateHUD(){
   const p=gps.pos; $('#hudCoord').textContent=coordText(p.lat,p.lng);
   const bits=[`±${p.acc.toFixed(0)} m`];
   if(p.alt!=null) bits.push(`${p.alt.toFixed(0)} msnm`);
+  if((p.speed||0)>0.5){ bits.push(`${(p.speed*3.6).toFixed(1)} km/h`); if(p.head!=null&&!isNaN(p.head)) bits.push(`rumbo ${p.head.toFixed(0)}° ${cardinal(p.head)}`); }
   if(view.meta){ const d=distToBounds(p.lat,p.lng,view.meta.bounds);
     if(d>0) bits.push(`<span class="out">Fuera del mapa · ${fmtDist(d)}</span>`);
     else { const v=valueAt(p.lat,p.lng); if(view.data&&view.data.values) bits.push(v!=null?`Valor aquí: <span class="val">${fmtNum(v)}</span>`:'Sin datos aquí'); } }
@@ -1477,8 +1681,50 @@ $('#fabFollow').onclick=()=>{
 /* =========================================================
    MARCAS Y RECORRIDOS
    ========================================================= */
-function pinIcon(color){ return L.divIcon({ className:'pin', iconSize:[30,40], iconAnchor:[15,38], popupAnchor:[0,-34],
-  html:`<svg width="30" height="40" viewBox="0 0 30 40"><path d="M15 39s-12-12.6-12-22A12 12 0 0 1 27 17c0 9.4-12 22-12 22Z" fill="${color}" stroke="#fff" stroke-width="2.5"/><circle cx="15" cy="16" r="4.5" fill="#fff"/></svg>` }); }
+const cardinal = h => ['N','NE','E','SE','S','SO','O','NO'][Math.round(((h%360)+360)%360/45)%8];
+const CATS=[
+  { id:'arbol',    name:'Árbol',                  color:'#1f7a3d', ico:'🌳' },
+  { id:'plaga',    name:'Plaga',                  color:'#d9452b', ico:'🐛' },
+  { id:'maleza',   name:'Maleza',                 color:'#65a30d', ico:'🌿' },
+  { id:'trampa',   name:'Trampa',                 color:'#ca8a04', ico:'🪤' },
+  { id:'pozo',     name:'Pozo',                   color:'#1a73e8', ico:'💧' },
+  { id:'estacion', name:'Estación meteorológica', color:'#0e7490', ico:'🌡️' },
+  { id:'lindero',  name:'Lindero',                color:'#7c3aed', ico:'🚩' },
+  { id:'muestreo', name:'Sitio de muestreo',      color:'#c2410c', ico:'🧪' },
+  { id:'otro',     name:'Otro',                   color:'#475569', ico:'📍' },
+];
+const catOf = id => CATS.find(c=>c.id===id) || CATS[CATS.length-1];
+const pinColor = f => f.cat ? catOf(f.cat).color : (f.color||'#d9452b');
+function pinIcon(f){ const c=pinColor(f), ico=f.cat?catOf(f.cat).ico:'';
+  return L.divIcon({ className:'pin', iconSize:[34,44], iconAnchor:[17,42], popupAnchor:[0,-36],
+  html:`<svg width="34" height="44" viewBox="0 0 34 44"><path d="M17 43S3 29 3 18.5A14 14 0 0 1 31 18.5C31 29 17 43 17 43Z" fill="${c}" stroke="#fff" stroke-width="2.5"/><circle cx="17" cy="18" r="10" fill="#fff"/>${ico?`<text x="17" y="23" text-anchor="middle" font-size="13">${ico}</text>`:`<circle cx="17" cy="18" r="4.5" fill="${c}"/>`}</svg>` }); }
+function fmtDur(s){ s=Math.round(s); const h=Math.floor(s/3600), m=Math.floor(s%3600/60), x=s%60; return h?`${h} h ${String(m).padStart(2,'0')} min`:`${String(m).padStart(2,'0')}:${String(x).padStart(2,'0')}`; }
+/* estadísticas de recorrido: distancia, tiempo, velocidad, subida/bajada */
+function trackStats(pts, alts, times){
+  const dist=pathLen(pts); const dur = times&&times.length>1 ? (times[times.length-1]-times[0])/1000 : 0;
+  let up=0, down=0, zmin=null, zmax=null, ref=null;
+  (alts||[]).forEach(z=>{ if(z==null||!isFinite(z)) return; zmin=zmin==null?z:Math.min(zmin,z); zmax=zmax==null?z:Math.max(zmax,z);
+    if(ref==null){ ref=z; return; } const d=z-ref; if(d>=3){ up+=d; ref=z; } else if(d<=-3){ down-=d; ref=z; } });
+  return { dist, dur, speed: dur>0 ? dist/dur : null, up: zmin==null?null:up, down: zmin==null?null:down, zmin, zmax };
+}
+function statsHTML(s){
+  const r=[['Distancia',fmtDist(s.dist)]];
+  if(s.dur) r.push(['Tiempo',fmtDur(s.dur)]);
+  if(s.speed!=null) r.push(['Velocidad promedio',`${(s.speed*3.6).toFixed(1)} km/h`]);
+  if(s.up!=null){ r.push(['Subida / bajada',`↑ ${s.up.toFixed(0)} m · ↓ ${s.down.toFixed(0)} m`]); r.push(['Elevación',`${s.zmin.toFixed(0)} – ${s.zmax.toFixed(0)} msnm`]); }
+  else if(s.dur) r.push(['Elevación','sin dato del GPS']);
+  return `<table>${r.map(([k,v])=>`<tr><td>${k}</td><td><b>${v}</b></td></tr>`).join('')}</table>`;
+}
+function photoViewer(blob){ const u=URL.createObjectURL(blob);
+  modal((c,close)=>{ c.style.padding='8px'; c.innerHTML=`<img src="${u}" style="width:100%;border-radius:12px;display:block"><div class="btns" style="margin-top:8px"><button class="btn">Cerrar</button></div>`;
+    c.querySelector('button').onclick=()=>close(); }).then(()=>{ c0(); URL.revokeObjectURL(u); });
+  function c0(){ $('#modalCard').style.padding=''; } }
+async function compressPhoto(file){
+  const img=await loadImg(file); const s=Math.min(1,1600/Math.max(img.naturalWidth,img.naturalHeight));
+  const cv=document.createElement('canvas'); cv.width=Math.round(img.naturalWidth*s); cv.height=Math.round(img.naturalHeight*s);
+  cv.getContext('2d').drawImage(img,0,0,cv.width,cv.height); URL.revokeObjectURL(img.src);
+  return canvasToBlob(cv,'image/jpeg',.8);
+}
 async function loadFeats(){
   view.featLayer.clearLayers();
   view.feats=(await featsOf(view.meta.id)).sort((a,b)=>a.t-b.t);
@@ -1486,13 +1732,17 @@ async function loadFeats(){
 }
 function drawFeat(f){
   if(f.kind==='pin'){
-    const m=L.marker([f.lat,f.lng],{ icon:pinIcon(f.color) }).addTo(view.featLayer);
+    const m=L.marker([f.lat,f.lng],{ icon:pinIcon(f) }).addTo(view.featLayer);
     m.bindPopup(()=>{ const v=valueAt(f.lat,f.lng); const d=document.createElement('div');
-      d.innerHTML=`<div class="pop-title">${esc(f.name)}</div>${f.note?`<div>${esc(f.note)}</div>`:''}
+      const attrs=(f.attrs||[]).filter(a=>a.k||a.v);
+      d.innerHTML=`<div class="pop-title">${esc(f.name)}</div>${f.cat?`<div class="sub">${catOf(f.cat).ico} ${esc(catOf(f.cat).name)}</div>`:''}${f.note?`<div>${esc(f.note)}</div>`:''}
+        ${(f.photos||[]).length?`<div class="pop-photos" style="display:flex;gap:6px;overflow-x:auto;margin:6px 0">${f.photos.map((p,i)=>{ const u=URL.createObjectURL(p.blob); view.urls.push(u); return `<img data-i="${i}" src="${u}" style="width:72px;height:72px;object-fit:cover;border-radius:8px;flex:none;cursor:pointer">`; }).join('')}</div>`:''}
+        ${attrs.length?`<table>${attrs.map(a=>`<tr><td>${esc(a.k)}</td><td><b>${esc(a.v)}</b></td></tr>`).join('')}</table>`:''}
         <div class="sub mono">${coordText(f.lat,f.lng)}</div>${v!=null?`<div class="sub">Valor: <b>${fmtNum(v)}</b></div>`:''}
         ${gps.pos?`<div class="sub">A ${fmtDist(L.latLng(gps.pos.lat,gps.pos.lng).distanceTo([f.lat,f.lng]))} de ti</div>`:''}
         <div class="sub">${new Date(f.t).toLocaleString('es-GT')}</div>
         <div class="btns" style="margin-top:8px"><button class="btn sm" data-a="edit">Editar</button><button class="btn sm dng" data-a="del">Borrar</button></div>`;
+      d.querySelectorAll('.pop-photos img').forEach(im=>im.onclick=()=>photoViewer(f.photos[+im.dataset.i].blob));
       d.querySelector('[data-a=edit]').onclick=()=>{ view.map.closePopup(); editPin(f); };
       d.querySelector('[data-a=del]').onclick=()=>{ view.map.closePopup(); delFeat(f); };
       return d; });
@@ -1500,7 +1750,7 @@ function drawFeat(f){
   } else if(f.kind==='track'){
     const l=L.polyline(f.pts,{ color:f.color||'#7c3aed', weight:4, opacity:.9 }).addTo(view.featLayer);
     l.on('click',e=>{ L.DomEvent.stopPropagation(e); if(view.mode==='measure'){ addVertex(e.latlng); return; }
-      const d=document.createElement('div'); d.innerHTML=`<div class="pop-title">${esc(f.name)}</div><div class="sub">${fmtDist(f.dist)} · ${f.pts.length} puntos</div><div class="sub">${new Date(f.t).toLocaleString('es-GT')}</div><div class="btns" style="margin-top:8px"><button class="btn sm dng">Borrar</button></div>`;
+      const d=document.createElement('div'); d.innerHTML=`<div class="pop-title">${esc(f.name)}</div>${statsHTML(trackStats(f.pts,f.alts,f.times))}<div class="sub">${f.pts.length} puntos · ${new Date(f.t).toLocaleString('es-GT')}</div><div class="btns" style="margin-top:8px"><button class="btn sm dng">Borrar</button></div>`;
       d.querySelector('button').onclick=()=>{ view.map.closePopup(); delFeat(f); };
       L.popup().setLatLng(e.latlng).setContent(d).openOn(view.map); });
     f._l=l;
@@ -1516,26 +1766,53 @@ function drawFeat(f){
 const stripL = f => { const { _l, ...o } = f; return o; };
 async function delFeat(f){ if(!await confirmBox('¿Borrar?',`Se borrará “${f.name}”.`,'Borrar',true)) return;
   await dbDel('feats',f.id); view.featLayer.removeLayer(f._l); view.feats=view.feats.filter(x=>x.id!==f.id); toast('Borrado'); }
-function pinForm(title, f){ return modal((c,close)=>{
-  let color=f.color;
-  c.innerHTML=`<h2>${esc(title)}</h2><p class="mono">${coordText(f.lat,f.lng)}</p>
+function pinForm(title, f, isNew){ return modal((c,close)=>{
+  let cat=f.cat||'otro', photos=(f.photos||[]).slice(), attrs=(f.attrs||[]).map(a=>({...a})), nameTouched=!isNew;
+  if(isNew && !attrs.length) attrs=(lsGet('attrKeys_'+cat,[])).map(k=>({k,v:''}));
+  const urls=[];
+  const catBtns=()=>CATS.map(k=>`<button type="button" data-cat="${k.id}" class="catb${k.id===cat?' sel':''}" style="--c:${k.color}"><span>${k.ico}</span>${esc(k.name)}</button>`).join('');
+  c.innerHTML=`<h2>${esc(title)}</h2><p class="mono" style="margin-bottom:6px">${f.lat.toFixed(6)}, ${f.lng.toFixed(6)}<br>UTM ${utmOf(f.lat,f.lng)}</p>
+    <div class="field"><span>Tipo de punto</span><div class="cats" id="pc">${catBtns()}</div></div>
     <label class="field"><span>Nombre</span><input id="pn" value="${esc(f.name)}"></label>
-    <label class="field"><span>Nota</span><textarea id="pt" placeholder="Ej. maleza resistente, boquilla tapada, punto de carga…">${esc(f.note||'')}</textarea></label>
-    <div class="field"><span>Color</span><div class="colors">${PIN_COLORS.map(k=>`<button data-c="${k}" style="background:${k}" class="${k===color?'sel':''}"></button>`).join('')}</div></div>
+    <label class="field"><span>Descripción</span><textarea id="pt" placeholder="Ej. foco de maleza, trampa revisada, boquilla tapada…">${esc(f.note||'')}</textarea></label>
+    <div class="field"><span>Fotografías</span><div class="phs" id="ph"></div>
+      <div class="btns" style="margin-top:6px"><label class="btn sm">📷 Tomar foto<input type="file" accept="image/*" capture="environment" hidden id="pcam"></label><label class="btn sm">🖼️ Galería<input type="file" accept="image/*" multiple hidden id="pgal"></label></div></div>
+    <div class="field"><span>Atributos</span><div id="pa"></div><button type="button" class="btn sm" id="paAdd" style="margin-top:6px">+ Agregar atributo</button></div>
     <div class="btns"><button class="btn" data-a="0">Cancelar</button><button class="btn pri" data-a="1">Guardar</button></div>`;
-  c.querySelectorAll('[data-c]').forEach(b=>b.onclick=()=>{ color=b.dataset.c; c.querySelectorAll('[data-c]').forEach(x=>x.classList.toggle('sel',x===b)); });
-  c.querySelector('[data-a="0"]').onclick=()=>close(null);
-  c.querySelector('[data-a="1"]').onclick=()=>close({ name:c.querySelector('#pn').value.trim()||f.name, note:c.querySelector('#pt').value.trim(), color });
+  const drawPh=()=>{ urls.forEach(u=>URL.revokeObjectURL(u)); urls.length=0;
+    c.querySelector('#ph').innerHTML=photos.length?photos.map((p,i)=>{ const u=URL.createObjectURL(p.blob); urls.push(u); return `<div class="ph"><img src="${u}"><button type="button" data-rm="${i}" aria-label="Quitar">×</button></div>`; }).join(''):'<div class="sub">Sin fotos</div>';
+    c.querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{ photos.splice(+b.dataset.rm,1); drawPh(); }); };
+  const drawAt=()=>{ const el=c.querySelector('#pa');
+    el.innerHTML=attrs.map((a,i)=>`<div class="attr"><input data-k="${i}" placeholder="Atributo (ej. cobertura %)" value="${esc(a.k)}"><input data-v="${i}" placeholder="Valor" value="${esc(a.v)}"><button type="button" data-x="${i}" aria-label="Quitar">×</button></div>`).join('');
+    el.querySelectorAll('[data-k]').forEach(i=>i.oninput=()=>attrs[+i.dataset.k].k=i.value);
+    el.querySelectorAll('[data-v]').forEach(i=>i.oninput=()=>attrs[+i.dataset.v].v=i.value);
+    el.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{ attrs.splice(+b.dataset.x,1); drawAt(); }); };
+  drawPh(); drawAt();
+  const nameIn=c.querySelector('#pn'); nameIn.oninput=()=>nameTouched=true;
+  c.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{ cat=b.dataset.cat; c.querySelectorAll('[data-cat]').forEach(x=>x.classList.toggle('sel',x===b));
+    if(!nameTouched) nameIn.value=`${catOf(cat).name} ${nextNum(cat)}`;
+    if(isNew && !attrs.some(a=>a.k||a.v)){ attrs=lsGet('attrKeys_'+cat,[]).map(k=>({k,v:''})); drawAt(); } });
+  const addPh=async inp=>{ const fs=[...inp.files]; inp.value=''; for(const x of fs){ try{ photos.push({ blob:await compressPhoto(x), t:Date.now() }); }catch(e){ toast('No se pudo leer la foto'); } } drawPh(); };
+  c.querySelector('#pcam').onchange=e=>addPh(e.target); c.querySelector('#pgal').onchange=e=>addPh(e.target);
+  c.querySelector('#paAdd').onclick=()=>{ attrs.push({k:'',v:''}); drawAt(); c.querySelector(`[data-k="${attrs.length-1}"]`).focus(); };
+  const fin=v=>{ urls.forEach(u=>URL.revokeObjectURL(u)); close(v); };
+  c.querySelector('[data-a="0"]').onclick=()=>fin(null);
+  c.querySelector('[data-a="1"]').onclick=()=>{ const at=attrs.map(a=>({k:a.k.trim(),v:a.v.trim()})).filter(a=>a.k||a.v);
+    if(at.length) lsSet('attrKeys_'+cat, at.map(a=>a.k).filter(Boolean));
+    fin({ name:nameIn.value.trim()||f.name, note:c.querySelector('#pt').value.trim(), cat, photos, attrs:at }); };
 }); }
+function nextNum(cat){ return (view.feats||[]).filter(f=>f.kind==='pin'&&(f.cat||'otro')===cat).length+1; }
 let pinBusy=false;
 async function addPinFlow(lat,lng){
   if(pinBusy||!view.meta) return; pinBusy=true;
   try{
-    const n=view.feats.filter(f=>f.kind==='pin').length+1;
-    const f={ id:uid(), mapId:view.meta.id, kind:'pin', lat, lng, name:`Marca ${n}`, note:'', color:lsGet('pinColor',PIN_COLORS[0]), t:Date.now() };
-    const r=await pinForm('Nueva marca', f); if(!r) return;
-    Object.assign(f,r); lsSet('pinColor',r.color); await dbPut('feats',f); view.feats.push(f); drawFeat(f); toast('Marca guardada');
-  } finally { pinBusy=false; }
+    const cat=lsGet('lastCat','otro');
+    const f={ id:uid(), mapId:view.meta.id, kind:'pin', lat, lng, cat, name:`${catOf(cat).name} ${nextNum(cat)}`, note:'', photos:[], attrs:[], t:Date.now(),
+              acc: gps.pos?Math.round(gps.pos.acc):null, alt: gps.pos&&gps.pos.alt!=null?Math.round(gps.pos.alt):null };
+    const r=await pinForm('Nuevo punto', f, true); if(!r) return;
+    Object.assign(f,r); lsSet('lastCat',r.cat); await dbPut('feats',f); view.feats.push(f); drawFeat(f); toast('Punto guardado');
+  } catch(e){ console.error(e); toast('No se pudo guardar: '+(e.message||e)); }
+  finally { pinBusy=false; }
 }
 async function editPin(f){ const r=await pinForm('Editar marca', f); if(!r) return; Object.assign(f,r); await dbPut('feats',stripL(f)); view.featLayer.removeLayer(f._l); drawFeat(f); }
 $('#fabPin').onclick=()=>{
@@ -1544,10 +1821,10 @@ $('#fabPin').onclick=()=>{
 };
 
 /* ---------- grabar recorrido ---------- */
-const rec={ on:false, pts:[], line:null, t0:0, timer:null, lock:null };
+const rec={ on:false, pts:[], alts:[], times:[], line:null, t0:0, timer:null, lock:null };
 async function startRec(){
   if(!gps.pos){ startGPS(); toast('Espera la señal GPS para grabar'); return; }
-  rec.on=true; rec.pts=[]; rec.t0=Date.now(); rec.line=L.polyline([],{ color:'#d9452b', weight:4 }).addTo(view.map);
+  rec.on=true; rec.pts=[]; rec.alts=[]; rec.times=[]; rec.t0=Date.now(); rec.line=L.polyline([],{ color:'#d9452b', weight:4 }).addTo(view.map);
   $('#fabRec').classList.add('rec'); $('#recBar').hidden=false; recPoint(true);
   rec.timer=setInterval(recTick,1000); recTick();
   try{ if(navigator.wakeLock) rec.lock=await navigator.wakeLock.request('screen'); }catch(e){}
@@ -1556,21 +1833,27 @@ async function startRec(){
 function recPoint(force){
   if(!rec.on||!gps.pos) return; const p=gps.pos; if(p.acc>40 && !force) return;
   const last=rec.pts[rec.pts.length-1];
-  if(!last || L.latLng(last).distanceTo([p.lat,p.lng])>=Math.max(3,p.acc/3)){ rec.pts.push([p.lat,p.lng]); rec.line.addLatLng([p.lat,p.lng]); }
+  if(force || !last || L.latLng(last).distanceTo([p.lat,p.lng])>=Math.max(3,p.acc/3)){
+    rec.pts.push([p.lat,p.lng]); rec.alts.push(p.alt!=null&&isFinite(p.alt)?+p.alt.toFixed(1):null); rec.times.push(Date.now()); rec.line.addLatLng([p.lat,p.lng]); }
 }
-function recTick(){ const s=Math.floor((Date.now()-rec.t0)/1000); $('#recTxt').textContent=`${fmtDist(pathLen(rec.pts))} · ${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`; }
+function recTick(){ const s=(Date.now()-rec.t0)/1000, st=trackStats(rec.pts,rec.alts,rec.times);
+  const parts=[fmtDist(st.dist), fmtDur(s)]; if(s>20&&st.dist>0) parts.push(`${(st.dist/s*3.6).toFixed(1)} km/h`); if(st.up!=null) parts.push(`↑${st.up.toFixed(0)} ↓${st.down.toFixed(0)} m`);
+  $('#recTxt').textContent=parts.join(' · '); }
 async function stopRec(silent){
+  if(gps.pos && rec.pts.length) recPoint(true);
   rec.on=false; clearInterval(rec.timer); $('#fabRec').classList.remove('rec'); $('#recBar').hidden=true;
   try{ rec.lock&&rec.lock.release(); }catch(e){} rec.lock=null;
-  const line=rec.line; rec.line=null; const pts=rec.pts.slice(); rec.pts=[];
-  const meta=view.meta;
-  if(silent){ if(line) view.map.removeLayer(line); if(pts.length>=2&&meta){ await dbPut('feats',{ id:uid(), mapId:meta.id, kind:'track', pts, dist:pathLen(pts), name:`Recorrido ${new Date().toLocaleString('es-GT')}`, t:Date.now(), color:'#7c3aed' }); } return; }
+  const line=rec.line; rec.line=null; const pts=rec.pts.slice(), alts=rec.alts.slice(), times=rec.times.slice(); rec.pts=[]; rec.alts=[]; rec.times=[];
+  if(times.length) times[0]=rec.t0;
+  const meta=view.meta, st=trackStats(pts,alts,times);
+  const mk=name=>({ id:uid(), mapId:meta.id, kind:'track', pts, alts, times, dist:st.dist, dur:st.dur, name, t:Date.now(), color:'#7c3aed' });
   if(line) view.map.removeLayer(line);
+  if(silent){ if(pts.length>=2&&meta) await dbPut('feats',mk(`Recorrido ${new Date().toLocaleString('es-GT')}`)); return; }
   if(pts.length<2){ toast('Recorrido muy corto, no se guardó'); return; }
   const n=view.feats.filter(f=>f.kind==='track').length+1;
-  const name=await promptBox('Guardar recorrido',`${fmtDist(pathLen(pts))} grabados`,`Recorrido ${n}`);
+  const name=await promptBox('Guardar recorrido',`${fmtDist(st.dist)} en ${fmtDur(st.dur)}${st.speed?` · ${(st.speed*3.6).toFixed(1)} km/h`:''}${st.up!=null?` · ↑${st.up.toFixed(0)} ↓${st.down.toFixed(0)} m`:''}`,`Recorrido ${n}`);
   if(name===null){ toast('Recorrido descartado'); return; }
-  const f={ id:uid(), mapId:meta.id, kind:'track', pts, dist:pathLen(pts), name:name||`Recorrido ${n}`, t:Date.now(), color:'#7c3aed' };
+  const f=mk(name||`Recorrido ${n}`);
   await dbPut('feats',f); view.feats.push(f); drawFeat(f); toast('Recorrido guardado');
 }
 $('#fabRec').onclick=()=>{ if(rec.on) stopRec(); else startRec(); };
@@ -1632,11 +1915,18 @@ async function openSheet(){
   const others=(await dbAll('maps')).filter(x=>x.id!==m.id);
   if(others.length){ html+=`<h3>Superponer otros mapas</h3>`+others.map(o=>`<label class="row"><input type="checkbox" class="check" data-ov="${o.id}" ${view.extra[o.id]?'checked':''}><div class="grow">${esc(o.name)}<div class="sub">${esc(o.ext.toUpperCase())} · ${esc(o.info)}</div></div></label>`).join(''); }
   const feats=view.feats||[];
-  html+=`<h3>Marcas y recorridos (${feats.length})</h3>`;
-  html+= feats.length ? feats.map(f=>`<div class="row" data-f="${f.id}"><span style="width:14px;height:14px;border-radius:${f.kind==='pin'?'50%':'3px'};background:${f.kind==='pin'?f.color:f.kind==='area'?'#f2b705':(f.color||'#7c3aed')};flex:none"></span>
-      <div class="grow"><div>${esc(f.name)}</div><div class="sub">${f.kind==='pin'?(f.note?esc(f.note).slice(0,60):'Marca'):f.kind==='area'?fmtArea(f.area):fmtDist(f.dist)}</div></div><button class="btn sm" data-go="${f.id}">Ver</button></div>`).join('')
-    : `<div class="sub">Mantén presionado el mapa o usa el botón de marca para agregar puntos.</div>`;
-  html+=`<div class="btns" style="margin-top:14px"><button class="btn" id="expKml">Exportar KML</button><button class="btn" id="expGj">Exportar GeoJSON</button></div>`;
+  html+=`<h3>Puntos y recorridos (${feats.length})</h3>`;
+  const cnt={}; feats.filter(f=>f.kind==='pin').forEach(f=>{ const k=f.cat||'otro'; cnt[k]=(cnt[k]||0)+1; });
+  if(Object.keys(cnt).length) html+=`<div class="sub" style="margin-bottom:4px">${Object.entries(cnt).map(([k,n])=>`${catOf(k).ico} ${esc(catOf(k).name)}: <b>${n}</b>`).join(' · ')}</div>`;
+  const subOf=f=>{ if(f.kind==='pin') return [f.cat?catOf(f.cat).name:'Marca', (f.photos||[]).length?`📷 ${f.photos.length}`:'', f.note?esc(f.note).slice(0,50):''].filter(Boolean).join(' · ');
+    if(f.kind==='area') return fmtArea(f.area);
+    const st=trackStats(f.pts,f.alts,f.times); return [fmtDist(st.dist), st.dur?fmtDur(st.dur):'', st.speed?`${(st.speed*3.6).toFixed(1)} km/h`:'', st.up!=null?`↑${st.up.toFixed(0)} m`:''].filter(Boolean).join(' · '); };
+  const icoOf=f=> f.kind==='pin' ? `<span style="width:26px;height:26px;border-radius:50%;background:${pinColor(f)}22;border:2px solid ${pinColor(f)};display:grid;place-items:center;font-size:13px;flex:none">${f.cat?catOf(f.cat).ico:''}</span>`
+    : `<span style="width:26px;height:6px;border-radius:3px;background:${f.kind==='area'?'#f2b705':(f.color||'#7c3aed')};flex:none"></span>`;
+  html+= feats.length ? feats.map(f=>`<div class="row" data-f="${f.id}">${icoOf(f)}
+      <div class="grow"><div>${esc(f.name)}</div><div class="sub">${subOf(f)}</div></div><button class="btn sm" data-go="${f.id}">Ver</button></div>`).join('')
+    : `<div class="sub">Mantén presionado el mapa o usa el botón 📍 para agregar puntos (árboles, plagas, trampas, pozos, muestreo…).</div>`;
+  html+=`<h3>Exportar</h3><div class="btns"><button class="btn" data-exp="kmz">KMZ con fotos</button><button class="btn" data-exp="csv">Excel (CSV)</button><button class="btn" data-exp="geojson">GeoJSON</button></div>`;
   sh.innerHTML=html; $('#sheetWrap').hidden=false;
 
   const opR=$('#opR'); opR.oninput=()=>{ const v=+opR.value; $('#opV').textContent=Math.round(v*100)+'%'; setOpacity(v); };
@@ -1646,7 +1936,7 @@ async function openSheet(){
   sh.querySelectorAll('[data-ov]').forEach(ch=>ch.onchange=()=>toggleOverlay(ch.dataset.ov, ch.checked));
   sh.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>{ const f=feats.find(x=>x.id===b.dataset.go); $('#sheetWrap').hidden=true; setFollow(false);
     if(f.kind==='pin'){ view.map.setView([f.lat,f.lng],Math.max(view.map.getZoom(),18)); f._l.openPopup(); } else view.map.fitBounds(f._l.getBounds(),{padding:[40,40]}); });
-  $('#expKml').onclick=()=>exportFeats(m,'kml'); $('#expGj').onclick=()=>exportFeats(m,'geojson');
+  sh.querySelectorAll('[data-exp]').forEach(b=>b.onclick=()=>exportFeats(m,b.dataset.exp));
 }
 function setOpacity(v){
   view.main.eachLayer(l=>{ if(l.setOpacity) l.setOpacity(v); else if(l.eachLayer) l.eachLayer(x=>{ if(x.setStyle){ const p=(x.feature&&x.feature.properties)||{}; x.setStyle({ opacity:(p['stroke-opacity']??1)*v, fillOpacity:x.feature&&x.feature.geometry.type.includes('Point')?v:(p['fill-opacity']??0.22)*v }); } }); });
@@ -1671,26 +1961,61 @@ async function toggleOverlay(id,on){
 }
 
 /* ---------- exportar ---------- */
+async function saveOrShare(blob, name){
+  const file=new File([blob], name, { type:blob.type });
+  if(navigator.canShare && navigator.canShare({ files:[file] })){
+    const a=await modal((c,close)=>{ c.innerHTML=`<h2>${esc(name)}</h2><p>${fmtSize(blob.size)}</p><button class="opt" data-a="s"><b>Compartir</b><span>WhatsApp, correo, Drive…</span></button><button class="opt" data-a="d"><b>Guardar en Descargas</b></button><div class="btns" style="margin-top:8px"><button class="btn" data-a="">Cancelar</button></div>`;
+      c.querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>close(b.dataset.a)); });
+    if(a==='s'){ try{ await navigator.share({ files:[file], title:name }); }catch(e){} return; }
+    if(a!=='d') return;
+  }
+  download(blob, name);
+}
+function attrMap(f){ const o={}; (f.attrs||[]).forEach(a=>{ if(a.k) o[a.k]=a.v; }); return o; }
 async function exportFeats(m, fmt){
   const feats=await featsOf(m.id);
-  if(!feats.length){ toast('Este mapa no tiene marcas ni recorridos'); return; }
+  if(!feats.length){ toast('Este mapa no tiene puntos ni recorridos'); return; }
   const safe=m.name.replace(/[^\w\-áéíóúñÁÉÍÓÚÑ ]+/g,'').trim()||'mapa';
+  const fecha=t=>new Date(t).toLocaleString('es-GT');
   if(fmt==='geojson'){
-    const gj={ type:'FeatureCollection', features:feats.map(f=>({ type:'Feature',
-      properties:{ nombre:f.name, tipo:f.kind, nota:f.note||'', fecha:new Date(f.t).toISOString(), ...(f.dist?{longitud_m:+f.dist.toFixed(1)}:{}), ...(f.area?{area_ha:+(f.area/1e4).toFixed(4)}:{}) },
-      geometry: f.kind==='pin'?{ type:'Point', coordinates:[f.lng,f.lat] } : f.kind==='area'?{ type:'Polygon', coordinates:[[...f.pts,f.pts[0]].map(p=>[p[1],p[0]])] } : { type:'LineString', coordinates:f.pts.map(p=>[p[1],p[0]]) } })) };
-    download(new Blob([JSON.stringify(gj,null,1)],{type:'application/geo+json'}), `${safe}_marcas.geojson`); return;
+    const gj={ type:'FeatureCollection', features:feats.map(f=>{ const st=f.kind==='track'?trackStats(f.pts,f.alts,f.times):null; return { type:'Feature',
+      properties:{ nombre:f.name, tipo:f.kind==='pin'?'punto':f.kind==='area'?'area':'recorrido', ...(f.kind==='pin'?{categoria:catOf(f.cat).name, fotos:(f.photos||[]).length, ...attrMap(f)}:{}),
+        descripcion:f.note||'', fecha:new Date(f.t).toISOString(),
+        ...(st?{ longitud_m:+st.dist.toFixed(1), tiempo_min:+(st.dur/60).toFixed(1), vel_kmh:st.speed?+(st.speed*3.6).toFixed(2):null, subida_m:st.up!=null?Math.round(st.up):null, bajada_m:st.down!=null?Math.round(st.down):null }:{}),
+        ...(f.area?{area_ha:+(f.area/1e4).toFixed(4)}:{}) },
+      geometry: f.kind==='pin'?{ type:'Point', coordinates:[f.lng,f.lat] } : f.kind==='area'?{ type:'Polygon', coordinates:[[...f.pts,f.pts[0]].map(p=>[p[1],p[0]])] } : { type:'LineString', coordinates:f.pts.map((p,i)=>f.alts&&f.alts[i]!=null?[p[1],p[0],f.alts[i]]:[p[1],p[0]]) } }; }) };
+    return saveOrShare(new Blob([JSON.stringify(gj,null,1)],{type:'application/geo+json'}), `${safe}_puntos.geojson`);
   }
-  const k2=c=>{ const h=(c||'#d9452b').replace('#',''); return 'ff'+h.slice(4,6)+h.slice(2,4)+h.slice(0,2); };
+  if(fmt==='csv'){
+    const pins=feats.filter(f=>f.kind==='pin'); if(!pins.length){ toast('No hay puntos para exportar'); return; }
+    const keys=[...new Set(pins.flatMap(f=>(f.attrs||[]).map(a=>a.k).filter(Boolean)))];
+    const q=v=>{ v=v==null?'':String(v); return /[",;\n]/.test(v)?`"${v.replace(/"/g,'""')}"`:v; };
+    const head=['nombre','categoria','latitud','longitud','utm_zona','utm_este','utm_norte','altitud_m','precision_m','descripcion','fotos','fecha',...keys];
+    const rows=pins.map(f=>{ const z=Math.floor((f.lng+180)/6)+1, u=proj4(WGS,`+proj=utm +zone=${z}${f.lat<0?' +south':''} +datum=WGS84 +units=m +no_defs`,[f.lng,f.lat]), am=attrMap(f);
+      return [f.name, catOf(f.cat).name, f.lat.toFixed(7), f.lng.toFixed(7), `${z}${f.lat<0?'S':'N'}`, u[0].toFixed(1), u[1].toFixed(1), f.alt??'', f.acc??'', f.note||'', (f.photos||[]).length, fecha(f.t), ...keys.map(k=>am[k]??'')].map(q).join(','); });
+    return saveOrShare(new Blob(['﻿'+[head.join(','),...rows].join('\r\n')],{type:'text/csv'}), `${safe}_puntos.csv`);
+  }
+  // KMZ (KML + fotos)
+  const zip=new JSZip(), k2=c=>{ const h=(c||'#d9452b').replace('#',''); return 'ff'+h.slice(4,6)+h.slice(2,4)+h.slice(0,2); };
+  let ph=0;
   const pm=feats.map(f=>{
-    const desc=[f.note, f.kind==='area'?fmtArea(f.area):'', f.dist&&f.kind!=='pin'?fmtDist(f.dist):'', new Date(f.t).toLocaleString('es-GT')].filter(Boolean).join(' · ');
-    const head=`<Placemark><name>${esc(f.name)}</name><description>${esc(desc)}</description>`;
-    if(f.kind==='pin') return `${head}<Style><IconStyle><color>${k2(f.color)}</color></IconStyle></Style><Point><coordinates>${f.lng},${f.lat},0</coordinates></Point></Placemark>`;
+    let desc='', ext='';
+    if(f.kind==='pin'){
+      const imgs=(f.photos||[]).map(p=>{ const n=`fotos/foto_${++ph}.jpg`; zip.file(n,p.blob); return `<img src="${n}" width="400"/><br/>`; }).join('');
+      const at=(f.attrs||[]).filter(a=>a.k);
+      desc=`<b>${esc(catOf(f.cat).name)}</b><br/>${f.note?esc(f.note)+'<br/>':''}${at.map(a=>`${esc(a.k)}: <b>${esc(a.v)}</b>`).join('<br/>')}${at.length?'<br/>':''}${imgs}${fecha(f.t)}`;
+      ext=`<ExtendedData><Data name="categoria"><value>${esc(catOf(f.cat).name)}</value></Data>${at.map(a=>`<Data name="${esc(a.k)}"><value>${esc(a.v)}</value></Data>`).join('')}</ExtendedData>`;
+    } else if(f.kind==='area') desc=`${fmtArea(f.area)} · perímetro ${fmtDist(f.dist)} · ${fecha(f.t)}`;
+    else { const st=trackStats(f.pts,f.alts,f.times); desc=`${fmtDist(st.dist)}${st.dur?` · ${fmtDur(st.dur)}`:''}${st.speed?` · ${(st.speed*3.6).toFixed(1)} km/h`:''}${st.up!=null?` · ↑${st.up.toFixed(0)} m ↓${st.down.toFixed(0)} m`:''} · ${fecha(f.t)}`; }
+    const head=`<Placemark><name>${esc(f.name)}</name><description><![CDATA[${desc}]]></description>${ext}`;
+    if(f.kind==='pin') return `${head}<Style><IconStyle><color>${k2(pinColor(f))}</color></IconStyle></Style><Point><coordinates>${f.lng},${f.lat},0</coordinates></Point></Placemark>`;
     if(f.kind==='area') return `${head}<Style><LineStyle><color>ff1a1816</color><width>2</width></LineStyle><PolyStyle><color>5505b7f2</color></PolyStyle></Style><Polygon><outerBoundaryIs><LinearRing><coordinates>${[...f.pts,f.pts[0]].map(p=>`${p[1]},${p[0]},0`).join(' ')}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
-    return `${head}<Style><LineStyle><color>${k2(f.color||'#7c3aed')}</color><width>3</width></LineStyle></Style><LineString><coordinates>${f.pts.map(p=>`${p[1]},${p[0]},0`).join(' ')}</coordinates></LineString></Placemark>`;
+    return `${head}<Style><LineStyle><color>${k2(f.color||'#7c3aed')}</color><width>3</width></LineStyle></Style><LineString><coordinates>${f.pts.map((p,i)=>`${p[1]},${p[0]},${(f.alts&&f.alts[i])||0}`).join(' ')}</coordinates></LineString></Placemark>`;
   }).join('\n');
-  const kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(m.name)} — marcas</name>\n${pm}\n</Document></kml>`;
-  download(new Blob([kml],{type:'application/vnd.google-earth.kml+xml'}), `${safe}_marcas.kml`);
+  zip.file('doc.kml',`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(m.name)} — puntos</name>\n${pm}\n</Document></kml>`);
+  await busy('Preparando KMZ…');
+  const blob=await zip.generateAsync({ type:'blob', mimeType:'application/vnd.google-earth.kmz' }); done();
+  return saveOrShare(blob, `${safe}_puntos.kmz`);
 }
 
 /* =========================================================
