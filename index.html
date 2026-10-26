@@ -826,6 +826,8 @@ input,select,textarea{font:inherit}
 .attr input{flex:1;min-width:0;border:1px solid var(--line);border-radius:10px;padding:9px 10px;background:#fbfaf8}
 .attr button{width:36px;flex:none;border-radius:10px;background:#eeebe5;font-size:18px}
 label.btn{cursor:pointer}
+.lbl{background:none;border:0;box-shadow:none;padding:0;font-weight:700;font-size:12px;color:#111;text-shadow:0 0 3px #fff,0 0 3px #fff,0 0 2px #fff;white-space:nowrap}
+.lbl::before{display:none}
 .leaflet-popup-content{margin:12px 14px;font-size:14px;line-height:1.4}
 .leaflet-popup-content table{border-collapse:collapse;font-size:13px}
 .leaflet-popup-content td{padding:2px 6px 2px 0;vertical-align:top}
@@ -1055,9 +1057,10 @@ function groupFiles(list){
 const readText = f => f ? f.text() : Promise.resolve(null);
 
 async function importFile(file, side={}){
-  const ext=(file.name.split('.').pop()||'').toLowerCase();
-  const base=file.name.replace(/\.[^.]+$/,'');
+  let ext=(file.name.split('.').pop()||'').toLowerCase();
+  const base=file.name.replace(/\.[^.]+$/,'').replace(/[_ ](kmz|kml|zip|shp|tif|tiff|pdf|geojson|gpx)$/i,'');
   const buf=await file.arrayBuffer();
+  ext=await sniffType(buf, ext);
   let rec;
   if(ext==='tif'||ext==='tiff'||ext==='gtiff') rec=await importTiff(file.name, buf, side);
   else if(ext==='jpg'||ext==='jpeg'||ext==='png') rec=await importImage(file.name, new Blob([buf],{type:file.type||(ext==='png'?'image/png':'image/jpeg')}), await readText(side.world), await readText(side.aux), await readText(side.prj));
@@ -1077,6 +1080,24 @@ async function importFile(file, side={}){
   const meta={ id, name:base, file:file.name, ext, size:file.size, added:Date.now(), kind:rec.kind, bounds:rec.bounds, info:rec.info||'', style:rec.style||null, legend:rec.legend||null, thumb:rec.thumb };
   await busy('Guardando en el teléfono…');
   await tx(['maps','data'],'readwrite',t=>{ t.objectStore('maps').put(meta); t.objectStore('data').put({ id, ...rec.data }); });
+}
+/* Detecta el tipo por el contenido: archivos sin extensión o renombrados (p.ej. "shape_kmz" desde WhatsApp o Drive) */
+const KNOWN_EXT=new Set(['tif','tiff','gtiff','jpg','jpeg','png','pdf','kml','gpx','kmz','geojson','json','zip','shp']);
+async function sniffType(buf, ext){
+  const u=new Uint8Array(buf.slice(0,512)), head=String.fromCharCode(...u.subarray(0,8));
+  let t=null;
+  if(u[0]===0x50&&u[1]===0x4B){ try{ const z=await JSZip.loadAsync(buf); const n=Object.keys(z.files);
+      t = n.some(x=>/\.shp$/i.test(x)) ? 'zip' : n.some(x=>/\.kml$/i.test(x)) ? 'kmz' : 'zip'; }catch(e){ t='zip'; } }
+  else if(head.startsWith('%PDF')) t='pdf';
+  else if((u[0]===0x49&&u[1]===0x49&&(u[2]===42||u[2]===43))||(u[0]===0x4D&&u[1]===0x4D&&u[2]===0&&(u[3]===42||u[3]===43))) t='tif';
+  else if(u[0]===0xFF&&u[1]===0xD8) t='jpg';
+  else if(u[0]===0x89&&head.slice(1,4)==='PNG') t='png';
+  else if(u.length>=36 && ((u[0]<<24|u[1]<<16|u[2]<<8|u[3])===9994)) t='shp';
+  else { const txt=new TextDecoder().decode(u).replace(/^\uFEFF/,'').trimStart();
+    if(/^</.test(txt)) t = /<gpx[\s>]/i.test(txt) ? 'gpx' : 'kml';
+    else if(/^[\[{]/.test(txt)) t='geojson'; }
+  if(t && (!KNOWN_EXT.has(ext) || (t!==ext && !(t==='tif'&&/tiff?|gtiff/.test(ext)) && !(t==='jpg'&&ext==='jpeg') && !(t==='geojson'&&ext==='json')))) return t;
+  return ext;
 }
 function parseXML(txt){ const d=new DOMParser().parseFromString(txt,'text/xml'); if(d.querySelector('parsererror')) throw new Error('El archivo XML está dañado.'); return d; }
 
@@ -1419,8 +1440,9 @@ function vectorRec(gj, overlays=[]){
   overlays.forEach(o=>{ const ob=L.latLngBounds(o.bounds); b=b?b.extend(ob):ob; });
   if(!b || !b.isValid()) throw new Error('No se pudieron leer las coordenadas.');
   const bounds=[[b.getSouth(),b.getWest()],[b.getNorth(),b.getEast()]];
-  const types={}; gj.features.forEach(f=>{ const t=f.geometry.type.replace('Multi',''); types[t]=(types[t]||0)+1; });
-  const nm={Point:'puntos',LineString:'líneas',Polygon:'polígonos'};
+  const types={}; gj.features.forEach(f=>{ let g=f.geometry; if(g.type==='GeometryCollection') g=(g.geometries||[])[0]||g; let t=g.type.replace('Multi','');
+    const p=f.properties||{}; if(t==='Point'&&(p['icon-scale']===0||/labelOnly/i.test(p.styleUrl||''))) t='Label'; types[t]=(types[t]||0)+1; });
+  const nm={Point:'puntos',LineString:'líneas',Polygon:'polígonos',Label:'etiquetas'};
   const info=Object.entries(types).map(([t,n])=>`${n} ${nm[t]||t}`).join(' · ')+(overlays.length?` · ${overlays.length} imagen(es)`:'');
   return { kind:'vector', bounds, info, style:{ opacity:1 }, data:{ geojson:gj, overlays }, thumb:null };
 }
@@ -1637,12 +1659,23 @@ window.addEventListener('popstate',()=>{ if(!$('#modal').hidden){ $('#modal').hi
 $('#fitBtn').onclick=()=>{ if(!view.meta) return; if(view.meta.kind==='base'){ if(gps.pos){ setFollow(true); view.map.setView([gps.pos.lat,gps.pos.lng],Math.max(view.map.getZoom(),16)); } else toast('Esperando GPS…'); return; } setFollow(false); view.map.fitBounds(view.meta.bounds,{padding:[20,20]}); };
 
 const STYLE_KEYS=new Set(['stroke','stroke-width','stroke-opacity','fill','fill-opacity','styleUrl','styleHash','styleMapHash','marker-color','marker-symbol','marker-size','icon','icon-scale','icon-color','icon-opacity','label-scale','visibility','_capa']);
+/* Descripción HTML del KML (p.ej. "<b>Lote:</b> 0100101<br/>") → tabla de atributos */
+function descRows(html){
+  if(typeof html!=='string'||!html.trim()) return [];
+  const d=new DOMParser().parseFromString(`<div>${html.replace(/<br\s*\/?>/gi,'\n').replace(/<\/(p|div|tr|li)>/gi,'\n')}</div>`,'text/html');
+  const lines=d.body.textContent.split('\n').map(x=>x.trim()).filter(Boolean);
+  return lines.map(l=>{ const i=l.indexOf(':'); return i>0&&i<40 ? [l.slice(0,i).trim(), l.slice(i+1).trim()] : [null,l]; });
+}
 function featPopup(f){
   const p=f.properties||{}, name=p.name||p.Name||p.NOMBRE||p.nombre||'';
-  const rows=Object.entries(p).filter(([k,v])=>!STYLE_KEYS.has(k)&&k!=='name'&&v!==null&&v!==''&&typeof v!=='object').slice(0,25)
-    .map(([k,v])=>`<tr><td>${esc(k)}</td><td>${esc(typeof v==='number'?fmtNum(v):v)}</td></tr>`).join('');
-  return `${name?`<div class="pop-title">${esc(name)}</div>`:''}${rows?`<table>${rows}</table>`:''}${p.description&&typeof p.description==='string'?`<div class="sub">${esc(p.description.replace(/<[^>]+>/g,' ')).slice(0,300)}</div>`:''}` || 'Sin atributos';
+  const rows=Object.entries(p).filter(([k,v])=>!STYLE_KEYS.has(k)&&!/^label-|^icon-|^description$/.test(k)&&k!=='name'&&v!==null&&v!==''&&typeof v!=='object').slice(0,25)
+    .map(([k,v])=>`<tr><td>${esc(k)}</td><td>${esc(typeof v==='number'?fmtNum(v):v)}</td></tr>`);
+  descRows(p.description).slice(0,30).forEach(([k,v])=>rows.push(k?`<tr><td>${esc(k)}</td><td><b>${esc(v)}</b></td></tr>`:`<tr><td colspan="2">${esc(v)}</td></tr>`));
+  return `${name?`<div class="pop-title">${esc(name)}</div>`:''}${rows.length?`<table>${rows.join('')}</table>`:''}` || 'Sin atributos';
 }
+const isLabelPt = f => { const p=f.properties||{}; return f.geometry && f.geometry.type==='Point' && (p['icon-scale']===0 || /labelOnly/i.test(p.styleUrl||'')); };
+function featText(f){ const p=f.properties||{}; return [p.name,p.Name,p.NOMBRE,p.nombre,...Object.values(p).filter(v=>typeof v==='string'&&v.length<60),
+  ...descRows(p.description).map(r=>r[1])].filter(Boolean).join(' ').toLowerCase(); }
 function buildLayer(meta,data){
   const g=L.featureGroup(), op=(meta.style&&meta.style.opacity)??1;
   if(meta.kind==='raster'){
@@ -1650,11 +1683,25 @@ function buildLayer(meta,data){
     g.addLayer(L.imageOverlay(u, meta.bounds, { opacity:op, interactive:false }));
   } else {
     (data.overlays||[]).forEach(o=>{ const u=URL.createObjectURL(o.blob); view.urls.push(u); g.addLayer(L.imageOverlay(u,o.bounds,{ opacity:op })); });
-    g.addLayer(L.geoJSON(data.geojson,{
-      style:f=>{ const p=f.properties||{}; return { color:p.stroke||'#d9452b', weight:Math.max(2,+p['stroke-width']||2.5), opacity:(p['stroke-opacity']??1)*op, fillColor:p.fill||'#f2b705', fillOpacity:(p['fill-opacity']??0.22)*op }; },
+    const feats=data.geojson.features, shapes=feats.filter(f=>!isLabelPt(f)), labels=feats.filter(isLabelPt);
+    const open=(f,ll)=>L.popup({maxWidth:280}).setLatLng(ll).setContent(featPopup(f)).openOn(view.map);
+    g.addLayer(L.geoJSON({type:'FeatureCollection',features:shapes},{
+      style:f=>{ const p=f.properties||{}; return { color:p.stroke||'#d9452b', weight:Math.min(4,Math.max(1.2,+p['stroke-width']||2.5)), opacity:(+(p['stroke-opacity']??1))*op, fillColor:p.fill||'#f2b705', fillOpacity:(+(p['fill-opacity']??0.22))*op }; },
       pointToLayer:(f,ll)=>L.circleMarker(ll,{ radius:7, color:'#fff', weight:2, fillColor:(f.properties||{})['marker-color']||'#d9452b', fillOpacity:1 }),
-      onEachFeature:(f,l)=>{ l.on('click',e=>{ L.DomEvent.stopPropagation(e); if(view.mode==='measure'){ addVertex(e.latlng); return; } L.popup({maxWidth:280}).setLatLng(e.latlng).setContent(featPopup(f)).openOn(view.map); }); }
+      onEachFeature:(f,l)=>{ l.on('click',e=>{ L.DomEvent.stopPropagation(e); if(view.mode==='measure'){ addVertex(e.latlng); return; } open(f,e.latlng); }); }
     }));
+    if(labels.length){
+      // etiquetas de texto (nombres de lote): solo se muestran con zoom cercano
+      const lg=L.layerGroup();
+      labels.forEach(f=>{ const c=f.geometry.coordinates, ll=[c[1],c[0]];
+        const t=L.tooltip({ permanent:true, direction:'center', className:'lbl', interactive:true }).setLatLng(ll).setContent(esc((f.properties||{}).name||''));
+        t.on('click',()=>open(f,ll)); lg.addLayer(t); });
+      const minZ=labels.length>300?15:labels.length>80?14:12;
+      const upd=()=>{ if(!view.map) return; const on=view.map.getZoom()>=minZ; if(on&&!view.map.hasLayer(lg)) lg.addTo(view.map); if(!on&&view.map.hasLayer(lg)) view.map.removeLayer(lg); };
+      g.on('add',()=>{ view.map.on('zoomend',upd); upd(); });
+      g.on('remove',()=>{ view.map.off('zoomend',upd); view.map.removeLayer(lg); });
+    }
+    g._search=feats.filter(f=>f.geometry).map(f=>({ f, txt:featText(f) }));
   }
   return g;
 }
@@ -1958,6 +2005,8 @@ async function openSheet(){
         <div class="sub">Toca el mapa para ver el valor de cualquier punto.</div>`;
     }
   }
+  const srch=[view.main,...Object.values(view.extra)].filter(Boolean).flatMap(l=>l._search||[]);
+  if(srch.length) html+=`<h3>Buscar en el mapa</h3><input id="qIn" type="search" placeholder="Nombre de lote, finca, variedad…" style="width:100%;border:1px solid var(--line);border-radius:10px;padding:11px 12px;background:#fbfaf8"><div id="qRes"></div>`;
   html+=`<h3>Coordenadas (Guatemala)</h3><div class="bases" id="crdSeg">${Object.entries(COORD_FMTS).map(([k,n])=>`<button data-c="${k}" class="${view.coordFmt===k?'sel':''}">${esc(n)}</button>`).join('')}</div>
     <div class="sub" style="margin-top:6px">UTM 15N cubre todo el país sin cambiar de zona al cruzar −90°. Usa el mismo sistema que tus mapas de QGIS.</div>`;
   html+=`<h3>Mapa base (QuickMap)</h3><div class="bases" id="baseSeg">${Object.entries(BASEMAPS).map(([k,b])=>`<button data-v="${k}" class="${curBase()===k?'sel':''}">${esc(b.name)}</button>`).join('')}</div>
@@ -1982,6 +2031,18 @@ async function openSheet(){
   const opR=$('#opR'); if(opR) opR.oninput=()=>{ const v=+opR.value; $('#opV').textContent=Math.round(v*100)+'%'; setOpacity(v); };
   if(opR) opR.onchange=()=>{ m.style=m.style||{}; m.style.opacity=+opR.value; dbPut('maps',m); };
   const rs=$('#rampSel'); if(rs){ const re=async()=>{ m.style.ramp=rs.value; m.style.invert=$('#invChk').checked; await restyle(); openSheet(); }; rs.onchange=re; $('#invChk').onchange=re; }
+  const qIn=$('#qIn'); if(qIn){ let tm; qIn.oninput=()=>{ clearTimeout(tm); tm=setTimeout(()=>{ const q=qIn.value.trim().toLowerCase(), box=$('#qRes');
+      if(q.length<2){ box.innerHTML=''; return; }
+      const words=q.split(/\s+/), seen=new Set(), hits=[];
+      for(const r of srch){ if(words.every(w=>r.txt.includes(w))){ const k=(r.f.properties||{}).name+'|'+(r.f.geometry.type==='Point'?'p':'g'); if(seen.has(k)) continue; seen.add(k); hits.push(r); if(hits.length>=30) break; } }
+      hits.sort((a,b)=>(a.f.geometry.type==='Point')-(b.f.geometry.type==='Point'));
+      box.innerHTML=hits.length?hits.map((r,i)=>{ const p=r.f.properties||{}, d=descRows(p.description).filter(x=>x[0]).slice(0,3).map(x=>`${x[0]}: ${x[1]}`).join(' · ');
+        return `<div class="row"><div class="grow"><div>${esc(p.name||'(sin nombre)')}</div><div class="sub">${esc(d)}</div></div><button class="btn sm" data-q="${i}">Ver</button></div>`; }).join('') : '<div class="sub" style="padding:8px 0">Sin resultados</div>';
+      box.querySelectorAll('[data-q]').forEach(b=>b.onclick=()=>{ const f=hits[+b.dataset.q].f, l=L.geoJSON(f), bb=l.getBounds(); $('#sheetWrap').hidden=true; setFollow(false);
+        if(f.geometry.type==='Point') view.map.setView(bb.getCenter(),17); else view.map.fitBounds(bb,{padding:[40,40],maxZoom:18});
+        const hl=L.geoJSON(f,{ style:{ color:'#00e5ff', weight:4, fillOpacity:0 }, pointToLayer:(x,ll)=>L.circleMarker(ll,{radius:12,color:'#00e5ff',weight:4,fillOpacity:0}), interactive:false }).addTo(view.map);
+        setTimeout(()=>view.map.removeLayer(hl),6000);
+        L.popup({maxWidth:280}).setLatLng(f.geometry.type==='Point'?bb.getCenter():(L.geoJSON(f).getLayers()[0].getCenter?.()||bb.getCenter())).setContent(featPopup(f)).openOn(view.map); }); },200); }; }
   sh.querySelectorAll('#crdSeg button').forEach(b=>b.onclick=()=>{ view.coordFmt=b.dataset.c; lsSet('coordFmt',b.dataset.c); sh.querySelectorAll('#crdSeg button').forEach(x=>x.classList.toggle('sel',x===b)); updateHUD(); });
   sh.querySelectorAll('#baseSeg button').forEach(b=>b.onclick=()=>{ setBasemap(b.dataset.v); sh.querySelectorAll('#baseSeg button').forEach(x=>x.classList.toggle('sel',x===b)); if(m.kind==='base') $('#mapSub').textContent=BASEMAPS[b.dataset.v].name+' · requiere internet'; if(b.dataset.v!=='none'&&!navigator.onLine) toast('Sin internet: solo se verán las zonas ya guardadas'); });
   sh.querySelectorAll('[data-ov]').forEach(ch=>ch.onchange=()=>toggleOverlay(ch.dataset.ov, ch.checked));
