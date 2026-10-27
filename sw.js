@@ -1,5 +1,5 @@
 /* Service worker: guarda la app en el teléfono para que abra sin internet */
-const CACHE = 'mapas-de-campo-v3';
+const CACHE = 'mapas-de-campo-v4';
 const ASSETS = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png', './pdf.min.js', './pdf.worker.min.js'];
 
 const TILES = 'teselas-v1', MAX_TILES = 6000;
@@ -23,14 +23,28 @@ async function trim(cache) {
   if (ks.length > MAX_TILES) for (const k of ks.slice(0, ks.length - MAX_TILES)) await cache.delete(k);
 }
 
+/* Archivos compartidos a la app desde otras apps (WhatsApp, Archivos, Drive…) */
+async function shared(req) {
+  try {
+    const fd = await req.formData(), c = await caches.open('compartidos');
+    let i = 0;
+    for (const f of fd.getAll('archivos')) {
+      if (!f || typeof f === 'string') continue;
+      await c.put(`./compartido/${Date.now()}_${i++}`, new Response(f, { headers: { 'content-type': f.type || 'application/octet-stream', 'x-nombre': encodeURIComponent(f.name || 'archivo') } }));
+    }
+  } catch (e) {}
+  return Response.redirect('./?compartido=1', 303);
+}
+
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== TILES).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== TILES && k !== 'compartidos').map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 self.addEventListener('fetch', e => {
   const req = e.request;
+  if (req.method === 'POST' && new URL(req.url).pathname.endsWith('/compartir')) { e.respondWith(shared(req)); return; }
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (TILE_HOSTS.test(url.hostname)) { e.respondWith(tile(req)); return; }

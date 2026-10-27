@@ -747,6 +747,11 @@ input,select,textarea{font:inherit}
   padding:7px 14px;border-radius:999px;font-weight:650;font-size:14px;box-shadow:var(--shadow);display:flex;gap:8px;align-items:center;font-variant-numeric:tabular-nums}
 #recBar i{width:9px;height:9px;border-radius:50%;background:#fff;animation:blink 1s infinite}
 @keyframes blink{50%{opacity:.25}}
+#pinBar{position:absolute;top:calc(var(--safe-t) + 70px);left:12px;right:12px;z-index:1000;background:var(--surface);border-radius:14px;box-shadow:var(--shadow);padding:10px 12px;border-left:5px solid var(--gps)}
+#pinBar .hint{font-size:13px;color:var(--muted);margin-top:2px}
+#pinBar .acts{display:flex;gap:8px;margin-top:8px}
+#map.aim .leaflet-container,#map.aim{cursor:crosshair}
+.ph small{display:block;font-size:10.5px;color:var(--muted);max-width:76px;margin-top:2px;line-height:1.2}
 #measBar{position:absolute;top:calc(var(--safe-t) + 70px);left:12px;right:12px;z-index:1000;background:var(--surface);border-radius:14px;box-shadow:var(--shadow);padding:10px 12px}
 #measBar .nums{display:flex;gap:18px;font-variant-numeric:tabular-nums}
 #measBar .nums div{font-size:12px;color:var(--muted)}
@@ -873,9 +878,14 @@ label.btn{cursor:pointer}
     <button class="icon-btn" id="backBtn" aria-label="Volver"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
     <div class="title"><b id="mapTitle"></b><span id="mapSub"></span></div>
     <button class="icon-btn" id="fitBtn" aria-label="Ver mapa completo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+    <button class="icon-btn" id="shareBtn" aria-label="Compartir trabajo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg></button>
     <button class="icon-btn" id="layersBtn" aria-label="Capas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg></button>
   </header>
   <div id="recBar" hidden><i></i><span id="recTxt">0 m · 00:00</span></div>
+  <div id="pinBar" class="topbar2" hidden>
+    <div><b>Modo Placemark</b><div class="hint">Toca <b>2 veces</b> el mapa (o doble clic) donde quieras el punto.</div></div>
+    <div class="acts"><button class="btn sm" id="pinGps">📍 En mi posición</button><button class="btn sm pri" id="pinDone" style="margin-left:auto">Terminar</button></div>
+  </div>
   <div id="measBar" hidden>
     <div class="nums"><div>Distancia<b id="mDist">0 m</b></div><div>Área<b id="mArea">—</b></div><div>Puntos<b id="mPts">0</b></div></div>
     <div class="hint">Toca el mapa para agregar vértices.</div>
@@ -1031,15 +1041,17 @@ function askCRS(fileName, detail){ return modal((c,close)=>{
 /* =========================================================
    IMPORTACIÓN
    ========================================================= */
-$('#fileIn').addEventListener('change', async e=>{
-  const files=groupFiles([...e.target.files]); e.target.value='';
+$('#fileIn').addEventListener('change', e=>{ const l=[...e.target.files]; e.target.value=''; importFiles(l); });
+async function importFiles(list){
+  const files=groupFiles(list);
+  if(!$('#mapView').hidden && typeof showLib==='function') showLib();
   for(const {file:f, side} of files){
     try{ await busy(`Importando ${f.name}…`); await importFile(f, side); toast(`“${f.name}” listo para usar sin internet`); }
     catch(err){ console.error(err); done(); await modal((c,close)=>{ c.innerHTML=`<h2>No se pudo importar</h2><p><b>${esc(f.name)}</b><br>${esc(err.message||err)}</p><div class="btns"><button class="btn pri">Entendido</button></div>`; c.querySelector('button').onclick=()=>close(); }); }
   }
   done(); renderLibrary();
   try{ if(navigator.storage&&navigator.storage.persist) navigator.storage.persist(); }catch(e){}
-});
+}
 
 /* Archivos acompañantes (.jgw, .wld, .prj, .aux.xml, .dbf…) se agrupan con su archivo principal */
 const SIDE_RE=/\.(jgw|jpgw|jpegw|pgw|pngw|wld|tfw|tifw|prj|aux\.xml|dbf|shx|cpg|qmd|sbn|sbx|xml)$/i;
@@ -1539,14 +1551,13 @@ async function mapMenu(m){
     c.innerHTML=`<h2>${esc(m.name)}</h2><p>${esc(m.file)}<br>${esc(m.info)}</p>
       <button class="opt" data-a="open"><b>Abrir</b></button>
       <button class="opt" data-a="ren"><b>Cambiar nombre</b></button>
-      <button class="opt" data-a="exp"><b>Exportar puntos y recorridos</b><span>KMZ con fotos (Google Earth / QGIS)</span></button><button class="opt" data-a="csv"><b>Exportar puntos a Excel (CSV)</b></button>
+      <button class="opt" data-a="exp"><b>Compartir trabajo</b><span>KMZ con fotos, KML, Excel o GeoJSON</span></button>
       <button class="opt" data-a="del" style="color:#b42318"><b>Eliminar del teléfono</b></button>
       <div class="btns" style="margin-top:8px"><button class="btn" data-a="">Cerrar</button></div>`;
     c.querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>close(b.dataset.a)); });
   if(a==='open') openMap(m.id);
   if(a==='ren'){ const n=await promptBox('Cambiar nombre','Nombre del mapa',m.name); if(n){ m.name=n; await dbPut('maps',m); renderLibrary(); } }
-  if(a==='exp') exportFeats(m, 'kmz');
-  if(a==='csv') exportFeats(m, 'csv');
+  if(a==='exp') shareWork(m);
   if(a==='del'){ if(await confirmBox('¿Eliminar mapa?',`Se borrará “${m.name}” y sus marcas y recorridos de este teléfono.`,'Eliminar',true)){
     const fs=await featsOf(m.id); await tx(['maps','data','feats'],'readwrite',t=>{ t.objectStore('maps').delete(m.id); t.objectStore('data').delete(m.id); fs.forEach(f=>t.objectStore('feats').delete(f.id)); });
     renderLibrary(); toast('Mapa eliminado'); } }
@@ -1647,6 +1658,7 @@ function closeMap(keepView){
   if(!view.map) return;
   if(rec.on) stopRec(true);
   if(view.mode==='measure') endMeasure();
+  endPinMode();
   if(view.main) view.map.removeLayer(view.main);
   Object.values(view.extra).forEach(l=>view.map.removeLayer(l)); view.extra={};
   view.featLayer.clearLayers(); view.urls.forEach(u=>URL.revokeObjectURL(u)); view.urls=[];
@@ -1688,14 +1700,14 @@ function buildLayer(meta,data){
     g.addLayer(L.geoJSON({type:'FeatureCollection',features:shapes},{
       style:f=>{ const p=f.properties||{}; return { color:p.stroke||'#d9452b', weight:Math.min(4,Math.max(1.2,+p['stroke-width']||2.5)), opacity:(+(p['stroke-opacity']??1))*op, fillColor:p.fill||'#f2b705', fillOpacity:(+(p['fill-opacity']??0.22))*op }; },
       pointToLayer:(f,ll)=>L.circleMarker(ll,{ radius:7, color:'#fff', weight:2, fillColor:(f.properties||{})['marker-color']||'#d9452b', fillOpacity:1 }),
-      onEachFeature:(f,l)=>{ l.on('click',e=>{ L.DomEvent.stopPropagation(e); if(view.mode==='measure'){ addVertex(e.latlng); return; } open(f,e.latlng); }); }
+      onEachFeature:(f,l)=>{ l.on('click',e=>{ L.DomEvent.stopPropagation(e); if(modeTap(e.latlng)) return; open(f,e.latlng); }); }
     }));
     if(labels.length){
       // etiquetas de texto (nombres de lote): solo se muestran con zoom cercano
       const lg=L.layerGroup();
       labels.forEach(f=>{ const c=f.geometry.coordinates, ll=[c[1],c[0]];
         const t=L.tooltip({ permanent:true, direction:'center', className:'lbl', interactive:true }).setLatLng(ll).setContent(esc((f.properties||{}).name||''));
-        t.on('click',()=>open(f,ll)); lg.addLayer(t); });
+        t.on('click',e=>{ if(e&&e.originalEvent) L.DomEvent.stopPropagation(e); if(modeTap(ll)) return; open(f,ll); }); lg.addLayer(t); });
       const minZ=labels.length>300?15:labels.length>80?14:12;
       const upd=()=>{ if(!view.map) return; const on=view.map.getZoom()>=minZ; if(on&&!view.map.hasLayer(lg)) lg.addTo(view.map); if(!on&&view.map.hasLayer(lg)) view.map.removeLayer(lg); };
       g.on('add',()=>{ view.map.on('zoomend',upd); upd(); });
@@ -1732,7 +1744,7 @@ function coordText(lat,lng){ return coordAs(view.coordFmt,lat,lng); }
 view.coordFmt=(f=>COORD_FMTS[f]?f:'utm15')(lsGet('coordFmt','utm15'));
 function onMapClick(e){
   if(view.suppress && Date.now()-view.suppress<800) return;
-  if(view.mode==='measure'){ addVertex(e.latlng); return; }
+  if(modeTap(e.latlng)) return;
   const v=valueAt(e.latlng.lat,e.latlng.lng);
   if(v==null && !(view.data&&view.data.values)) return;
   L.popup({maxWidth:260}).setLatLng(e.latlng).setContent(
@@ -1809,6 +1821,79 @@ function statsHTML(s){
   else if(s.dur) r.push(['Elevación','sin dato del GPS']);
   return `<table>${r.map(([k,v])=>`<tr><td>${k}</td><td><b>${v}</b></td></tr>`).join('')}</table>`;
 }
+/* ---------- Fotos georreferenciadas: leer y escribir EXIF GPS ---------- */
+async function readExif(file){
+  try{
+    const b=new DataView(await file.slice(0,262144).arrayBuffer());
+    if(b.getUint16(0)!==0xFFD8) return null;
+    let o=2;
+    while(o<b.byteLength-4){ const mk=b.getUint16(o), len=b.getUint16(o+2);
+      if(mk===0xFFE1 && b.getUint32(o+4)===0x45786966){ const t=o+10, le=b.getUint16(t)===0x4949;
+        const u16=x=>b.getUint16(t+x,le), u32=x=>b.getUint32(t+x,le);
+        const ifd=off=>{ const n=u16(off), m={}; for(let i=0;i<n;i++){ const e=off+2+i*12; m[u16(e)]={ type:u16(e+2), cnt:u32(e+4), at:e+8 }; } return m; };
+        const val=(en)=>{ if(!en) return null; const sz={1:1,2:1,3:2,4:4,5:8,7:1}[en.type]||1, at = en.cnt*sz>4 ? u32(en.at) : en.at;
+          if(en.type===2){ let s=''; for(let i=0;i<en.cnt-1;i++) s+=String.fromCharCode(b.getUint8(t+at+i)); return s; }
+          if(en.type===5){ const r=[]; for(let i=0;i<en.cnt;i++){ const d=u32(at+8*i+4); r.push(d?u32(at+8*i)/d:0); } return r; }
+          if(en.type===1) return b.getUint8(t+at); if(en.type===3) return u16(at); return u32(at); };
+        const i0=ifd(u32(4)), out={};
+        if(i0[0x8769]){ const ex=ifd(val(i0[0x8769])); const d=val(ex[0x9003]); if(d){ const m=d.match(/(\d+):(\d+):(\d+) (\d+):(\d+):(\d+)/); if(m) out.t=new Date(+m[1],m[2]-1,+m[3],+m[4],+m[5],+m[6]).getTime(); } }
+        if(i0[0x8825]){ const g=ifd(val(i0[0x8825])), la=val(g[2]), lo=val(g[4]);
+          if(la&&lo){ const dd=a=>a[0]+a[1]/60+a[2]/3600; out.lat=dd(la)*(val(g[1])==='S'?-1:1); out.lng=dd(lo)*(val(g[3])==='W'?-1:1);
+            const al=val(g[6]); if(al) out.alt=al[0]*(val(g[5])===1?-1:1); } }
+        return (out.lat!=null&&isFinite(out.lat)&&(out.lat||out.lng))||out.t ? out : null; }
+      if((mk&0xFF00)!==0xFF00) break; o+=2+len; }
+  }catch(e){ console.warn('EXIF',e); }
+  return null;
+}
+async function writeExifGPS(blob, p){
+  const src=new Uint8Array(await blob.arrayBuffer()); if(src[0]!==0xFF||src[1]!==0xD8||p.lat==null) return blob;
+  const T=new DataView(new ArrayBuffer(256)); let le=true;
+  const w16=(o,v)=>T.setUint16(o,v,le), w32=(o,v)=>T.setUint32(o,v,le);
+  T.setUint8(0,0x49); T.setUint8(1,0x49); w16(2,42); w32(4,8);
+  const ent=(o,tag,type,cnt,v)=>{ w16(o,tag); w16(o+2,type); w32(o+4,cnt); w32(o+8,v); };
+  // IFD0: DateTime + puntero GPS
+  w16(8,2); ent(10,0x0132,2,20,38); ent(22,0x8825,4,1,58); w32(34,0);
+  const d=new Date(p.t||Date.now()), z=n=>String(n).padStart(2,'0');
+  const ds=`${d.getFullYear()}:${z(d.getMonth()+1)}:${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`;
+  for(let i=0;i<19;i++) T.setUint8(38+i,ds.charCodeAt(i)); T.setUint8(57,0);
+  // GPS IFD en 58
+  const n=p.alt!=null?7:5; w16(58,n); let e=60;
+  const dataAt=60+n*12+4; let dp=dataAt;
+  const rat3=v=>{ const a=Math.abs(v), dg=Math.floor(a), mn=Math.floor((a-dg)*60), sc=Math.round(((a-dg)*60-mn)*60*10000); const at=dp;
+    [[dg,1],[mn,1],[sc,10000]].forEach(([nu,de],i)=>{ w32(at+i*8,nu); w32(at+i*8+4,de); }); dp+=24; return at; };
+  w16(e,0); w16(e+2,1); w32(e+4,4); T.setUint8(e+8,2); T.setUint8(e+9,3); T.setUint8(e+10,0); T.setUint8(e+11,0); e+=12;
+  w16(e,1); w16(e+2,2); w32(e+4,2); T.setUint8(e+8,(p.lat>=0?'N':'S').charCodeAt(0)); T.setUint8(e+9,0); e+=12;
+  ent(e,2,5,3,rat3(p.lat)); e+=12;
+  w16(e,3); w16(e+2,2); w32(e+4,2); T.setUint8(e+8,(p.lng>=0?'E':'W').charCodeAt(0)); T.setUint8(e+9,0); e+=12;
+  ent(e,4,5,3,rat3(p.lng)); e+=12;
+  if(p.alt!=null){ w16(e,5); w16(e+2,1); w32(e+4,1); T.setUint8(e+8,p.alt<0?1:0); e+=12; const at=dp; w32(at,Math.round(Math.abs(p.alt)*100)); w32(at+4,100); dp+=8; ent(e,6,5,1,at); e+=12; }
+  w32(e,0);
+  const tiff=new Uint8Array(T.buffer,0,dp), len=2+6+tiff.length;
+  const app1=new Uint8Array(4+6+tiff.length); app1.set([0xFF,0xE1,len>>8,len&255,0x45,0x78,0x69,0x66,0,0]); app1.set(tiff,10);
+  let ins=2; if(src[2]===0xFF&&src[3]===0xE0) ins=4+((src[4]<<8)|src[5]);
+  return new Blob([src.subarray(0,ins),app1,src.subarray(ins)],{type:'image/jpeg'});
+}
+/* ---------- ¿En qué lote cae el punto? (polígonos del KMZ/shapefile cargado) ---------- */
+function inRing(x,y,r){ let c=false; for(let i=0,j=r.length-1;i<r.length;j=i++){ const a=r[i],b=r[j]; if((a[1]>y)!==(b[1]>y) && x<(b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0]) c=!c; } return c; }
+function polysOf(g){ if(!g) return []; if(g.type==='Polygon') return [g.coordinates]; if(g.type==='MultiPolygon') return g.coordinates; if(g.type==='GeometryCollection') return g.geometries.flatMap(polysOf); return []; }
+function lotAt(lat,lng){
+  for(const l of [view.main,...Object.values(view.extra)].filter(Boolean)){
+    for(const r of (l._search||[])){ const ps=r._p||(r._p=polysOf(r.f.geometry)); if(!ps.length) continue;
+      if(!r._bb){ let a=[180,90,-180,-90]; ps.forEach(p=>p[0].forEach(q=>{ a[0]=Math.min(a[0],q[0]); a[1]=Math.min(a[1],q[1]); a[2]=Math.max(a[2],q[0]); a[3]=Math.max(a[3],q[1]); })); r._bb=a; }
+      const b=r._bb; if(lng<b[0]||lng>b[2]||lat<b[1]||lat>b[3]) continue;
+      if(ps.some(p=>inRing(lng,lat,p[0]) && !p.slice(1).some(h=>inRing(lng,lat,h)))){
+        const pr=r.f.properties||{}, m={}; Object.entries(pr).forEach(([k,v])=>{ if(typeof v!=='object'&&!STYLE_KEYS.has(k)&&!/^label-|^icon-|^description$/.test(k)) m[k]=v; });
+        descRows(pr.description).forEach(([k,v])=>{ if(k) m[k]=v; }); if(pr.name&&!m.Nombre) m._name=pr.name; return m; } } }
+  return null;
+}
+const DEF_ATTRS=['Lote','Finca','Plaga','Incidencia (%)','Responsable'];
+const ATTR_SUGG=['Lote','Finca','Plaga','Enfermedad','Maleza','Incidencia (%)','Severidad','Responsable','Etapa','Variedad','Observación','Dosis','Producto'];
+function fillFromLot(attrs, lot){
+  if(!lot) return attrs; const find=re=>{ const k=Object.keys(lot).find(k=>re.test(k)); return k!=null?String(lot[k]):null; };
+  const map={ 'lote':find(/^lote$|^lote[_ ]?id$|^cod.*lote/i)||null, 'finca':find(/^finca/i) };
+  attrs.forEach(a=>{ const k=a.k.toLowerCase(); if(!a.v && map[k]) a.v=map[k]; if(!a.v && k==='responsable') a.v=lsGet('responsable',''); });
+  return attrs;
+}
 function photoViewer(blob){ const u=URL.createObjectURL(blob);
   modal((c,close)=>{ c.style.padding='8px'; c.innerHTML=`<img src="${u}" style="width:100%;border-radius:12px;display:block"><div class="btns" style="margin-top:8px"><button class="btn">Cerrar</button></div>`;
     c.querySelector('button').onclick=()=>close(); }).then(()=>{ c0(); URL.revokeObjectURL(u); });
@@ -1843,14 +1928,14 @@ function drawFeat(f){
     f._l=m;
   } else if(f.kind==='track'){
     const l=L.polyline(f.pts,{ color:f.color||'#7c3aed', weight:4, opacity:.9 }).addTo(view.featLayer);
-    l.on('click',e=>{ L.DomEvent.stopPropagation(e); if(view.mode==='measure'){ addVertex(e.latlng); return; }
+    l.on('click',e=>{ L.DomEvent.stopPropagation(e); if(modeTap(e.latlng)) return;
       const d=document.createElement('div'); d.innerHTML=`<div class="pop-title">${esc(f.name)}</div>${statsHTML(trackStats(f.pts,f.alts,f.times))}<div class="sub">${f.pts.length} puntos · ${new Date(f.t).toLocaleString('es-GT')}</div><div class="btns" style="margin-top:8px"><button class="btn sm dng">Borrar</button></div>`;
       d.querySelector('button').onclick=()=>{ view.map.closePopup(); delFeat(f); };
       L.popup().setLatLng(e.latlng).setContent(d).openOn(view.map); });
     f._l=l;
   } else if(f.kind==='area'){
     const l=L.polygon(f.pts,{ color:'#16181a', weight:2.5, fillColor:'#f2b705', fillOpacity:.25 }).addTo(view.featLayer);
-    l.on('click',e=>{ L.DomEvent.stopPropagation(e); if(view.mode==='measure'){ addVertex(e.latlng); return; }
+    l.on('click',e=>{ L.DomEvent.stopPropagation(e); if(modeTap(e.latlng)) return;
       const d=document.createElement('div'); d.innerHTML=`<div class="pop-title">${esc(f.name)}</div><div class="pop-val">${fmtArea(f.area)}</div><div class="sub">Perímetro ${fmtDist(f.dist)}</div><div class="btns" style="margin-top:8px"><button class="btn sm dng">Borrar</button></div>`;
       d.querySelector('button').onclick=()=>{ view.map.closePopup(); delFeat(f); };
       L.popup().setLatLng(e.latlng).setContent(d).openOn(view.map); });
@@ -1862,10 +1947,14 @@ async function delFeat(f){ if(!await confirmBox('¿Borrar?',`Se borrará “${f.
   await dbDel('feats',f.id); view.featLayer.removeLayer(f._l); view.feats=view.feats.filter(x=>x.id!==f.id); toast('Borrado'); }
 function pinForm(title, f, isNew){ return modal((c,close)=>{
   let cat=f.cat||'otro', photos=(f.photos||[]).slice(), attrs=(f.attrs||[]).map(a=>({...a})), nameTouched=!isNew;
-  if(isNew && !attrs.length) attrs=(lsGet('attrKeys_'+cat,[])).map(k=>({k,v:''}));
+  const lot=isNew?lotAt(f.lat,f.lng):null;
+  const defKeys=c0=>{ const k=lsGet('attrKeys_'+c0,null); return (k&&k.length?k:DEF_ATTRS).map(k=>({k,v:''})); };
+  if(isNew && !attrs.length) attrs=fillFromLot(defKeys(cat), lot);
   const urls=[];
   const catBtns=()=>CATS.map(k=>`<button type="button" data-cat="${k.id}" class="catb${k.id===cat?' sel':''}" style="--c:${k.color}"><span>${k.ico}</span>${esc(k.name)}</button>`).join('');
-  c.innerHTML=`<h2>${esc(title)}</h2><p class="mono" style="margin-bottom:6px">${coordAs('utm15',f.lat,f.lng)}<br>${coordAs('gtm',f.lat,f.lng)}<br>${coordAs('ll',f.lat,f.lng)}</p>
+  c.innerHTML=`<h2>${esc(title)}</h2><p class="mono" style="margin-bottom:6px">${coordAs('utm15',f.lat,f.lng)}<br>${coordAs('gtm',f.lat,f.lng)}<br>${coordAs('ll',f.lat,f.lng)}<br>🕒 ${new Date(f.t).toLocaleString('es-GT')}${f.acc!=null?` · GPS ±${f.acc} m`:''}</p>
+    ${lot?`<div class="sub" style="background:var(--accent-soft);color:var(--accent);padding:8px 10px;border-radius:10px;margin-bottom:6px">Dentro de: <b>${esc(lot._name||lot.Lote||'lote')}</b>${lot.Finca?` · Finca ${esc(lot.Finca)}`:''}</div>`:''}
+    <datalist id="attrSugg">${ATTR_SUGG.map(a=>`<option value="${esc(a)}">`).join('')}</datalist>
     <div class="field"><span>Tipo de punto</span><div class="cats" id="pc">${catBtns()}</div></div>
     <label class="field"><span>Nombre</span><input id="pn" value="${esc(f.name)}"></label>
     <label class="field"><span>Descripción</span><textarea id="pt" placeholder="Ej. foco de maleza, trampa revisada, boquilla tapada…">${esc(f.note||'')}</textarea></label>
@@ -1874,10 +1963,10 @@ function pinForm(title, f, isNew){ return modal((c,close)=>{
     <div class="field"><span>Atributos</span><div id="pa"></div><button type="button" class="btn sm" id="paAdd" style="margin-top:6px">+ Agregar atributo</button></div>
     <div class="btns"><button class="btn" data-a="0">Cancelar</button><button class="btn pri" data-a="1">Guardar</button></div>`;
   const drawPh=()=>{ urls.forEach(u=>URL.revokeObjectURL(u)); urls.length=0;
-    c.querySelector('#ph').innerHTML=photos.length?photos.map((p,i)=>{ const u=URL.createObjectURL(p.blob); urls.push(u); return `<div class="ph"><img src="${u}"><button type="button" data-rm="${i}" aria-label="Quitar">×</button></div>`; }).join(''):'<div class="sub">Sin fotos</div>';
+    c.querySelector('#ph').innerHTML=photos.length?photos.map((p,i)=>{ const u=URL.createObjectURL(p.blob); urls.push(u); return `<div class="ph"><img src="${u}"><button type="button" data-rm="${i}" aria-label="Quitar">×</button><small>${p.lat!=null?(p.src==='exif'?'📍 de la foto':p.src==='gps'?`📍 GPS ±${p.acc??'?'} m`:'📍 del punto'):''}</small></div>`; }).join(''):'<div class="sub">Sin fotos. Cada foto guarda sus coordenadas GPS y la hora.</div>';
     c.querySelectorAll('[data-rm]').forEach(b=>b.onclick=()=>{ photos.splice(+b.dataset.rm,1); drawPh(); }); };
   const drawAt=()=>{ const el=c.querySelector('#pa');
-    el.innerHTML=attrs.map((a,i)=>`<div class="attr"><input data-k="${i}" placeholder="Atributo (ej. cobertura %)" value="${esc(a.k)}"><input data-v="${i}" placeholder="Valor" value="${esc(a.v)}"><button type="button" data-x="${i}" aria-label="Quitar">×</button></div>`).join('');
+    el.innerHTML=attrs.map((a,i)=>`<div class="attr"><input data-k="${i}" list="attrSugg" placeholder="Atributo" value="${esc(a.k)}"><input data-v="${i}" placeholder="Valor" value="${esc(a.v)}"><button type="button" data-x="${i}" aria-label="Quitar">×</button></div>`).join('');
     el.querySelectorAll('[data-k]').forEach(i=>i.oninput=()=>attrs[+i.dataset.k].k=i.value);
     el.querySelectorAll('[data-v]').forEach(i=>i.oninput=()=>attrs[+i.dataset.v].v=i.value);
     el.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{ attrs.splice(+b.dataset.x,1); drawAt(); }); };
@@ -1885,14 +1974,20 @@ function pinForm(title, f, isNew){ return modal((c,close)=>{
   const nameIn=c.querySelector('#pn'); nameIn.oninput=()=>nameTouched=true;
   c.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{ cat=b.dataset.cat; c.querySelectorAll('[data-cat]').forEach(x=>x.classList.toggle('sel',x===b));
     if(!nameTouched) nameIn.value=`${catOf(cat).name} ${nextNum(cat)}`;
-    if(isNew && !attrs.some(a=>a.k||a.v)){ attrs=lsGet('attrKeys_'+cat,[]).map(k=>({k,v:''})); drawAt(); } });
-  const addPh=async inp=>{ const fs=[...inp.files]; inp.value=''; for(const x of fs){ try{ photos.push({ blob:await compressPhoto(x), t:Date.now() }); }catch(e){ toast('No se pudo leer la foto'); } } drawPh(); };
-  c.querySelector('#pcam').onchange=e=>addPh(e.target); c.querySelector('#pgal').onchange=e=>addPh(e.target);
+    if(isNew && !attrs.some(a=>a.v&&!/^(lote|finca|responsable)$/i.test(a.k))){ attrs=fillFromLot(defKeys(cat), lot); drawAt(); } });
+  const addPh=async (inp,cam)=>{ const fs=[...inp.files]; inp.value=''; for(const x of fs){ try{
+      const ex=cam?null:await readExif(x), g=gps.pos&&(Date.now()-gps.pos.t<60000)?gps.pos:null, ph={ blob:await compressPhoto(x) };
+      if(ex&&ex.lat!=null){ Object.assign(ph,{ lat:ex.lat, lng:ex.lng, alt:ex.alt??null, t:ex.t||x.lastModified||Date.now(), src:'exif' }); }
+      else if(g){ Object.assign(ph,{ lat:g.lat, lng:g.lng, alt:g.alt??null, acc:Math.round(g.acc), t:cam?Date.now():(ex&&ex.t)||x.lastModified||Date.now(), src:'gps' }); }
+      else Object.assign(ph,{ lat:f.lat, lng:f.lng, alt:null, t:(ex&&ex.t)||Date.now(), src:'punto' });
+      photos.push(ph); }catch(e){ toast('No se pudo leer la foto'); } } drawPh(); };
+  c.querySelector('#pcam').onchange=e=>addPh(e.target,true); c.querySelector('#pgal').onchange=e=>addPh(e.target,false);
   c.querySelector('#paAdd').onclick=()=>{ attrs.push({k:'',v:''}); drawAt(); c.querySelector(`[data-k="${attrs.length-1}"]`).focus(); };
   const fin=v=>{ urls.forEach(u=>URL.revokeObjectURL(u)); close(v); };
   c.querySelector('[data-a="0"]').onclick=()=>fin(null);
   c.querySelector('[data-a="1"]').onclick=()=>{ const at=attrs.map(a=>({k:a.k.trim(),v:a.v.trim()})).filter(a=>a.k||a.v);
     if(at.length) lsSet('attrKeys_'+cat, at.map(a=>a.k).filter(Boolean));
+    const rs=at.find(a=>/^responsable$/i.test(a.k)&&a.v); if(rs) lsSet('responsable',rs.v);
     fin({ name:nameIn.value.trim()||f.name, note:c.querySelector('#pt').value.trim(), cat, photos, attrs:at }); };
 }); }
 function nextNum(cat){ return (view.feats||[]).filter(f=>f.kind==='pin'&&(f.cat||'otro')===cat).length+1; }
@@ -1909,10 +2004,20 @@ async function addPinFlow(lat,lng){
   finally { pinBusy=false; }
 }
 async function editPin(f){ const r=await pinForm('Editar marca', f); if(!r) return; Object.assign(f,r); await dbPut('feats',stripL(f)); view.featLayer.removeLayer(f._l); drawFeat(f); }
-$('#fabPin').onclick=()=>{
-  if(gps.pos){ addPinFlow(gps.pos.lat,gps.pos.lng); }
-  else { const c=view.map.getCenter(); toast('Sin GPS: la marca se pone en el centro de la pantalla'); addPinFlow(c.lat,c.lng); }
-};
+/* Modo Placemark: el botón lo activa; doble toque (o doble clic) en el mapa crea el punto ahí */
+let lastTap=null;
+function startPinMode(){ if(view.mode==='measure') endMeasure(); view.mode='pin'; view.map.closePopup(); view.map.doubleClickZoom.disable();
+  $('#fabPin').classList.add('on'); $('#pinBar').hidden=false; $('#map').classList.add('aim'); lastTap=null; }
+function endPinMode(){ if(view.mode!=='pin') return; view.mode=null; view.map.doubleClickZoom.enable(); $('#fabPin').classList.remove('on'); $('#pinBar').hidden=true; $('#map').classList.remove('aim'); }
+function pinTap(ll){
+  const now=Date.now(), pt=view.map.latLngToContainerPoint(ll);
+  if(lastTap && now-lastTap.t<450 && pt.distanceTo(lastTap.p)<40){ lastTap=null; addPinFlow(ll.lat,ll.lng); return; }
+  lastTap={ t:now, p:pt };
+}
+function modeTap(ll){ if(view.mode==='measure'){ addVertex(ll); return true; } if(view.mode==='pin'){ pinTap(ll); return true; } return false; }
+$('#fabPin').onclick=()=>{ if(view.mode==='pin') endPinMode(); else startPinMode(); };
+$('#pinGps').onclick=()=>{ if(gps.pos) addPinFlow(gps.pos.lat,gps.pos.lng); else toast('Sin señal GPS todavía'); };
+$('#pinDone').onclick=endPinMode;
 
 /* ---------- grabar recorrido ---------- */
 const rec={ on:false, pts:[], alts:[], times:[], line:null, t0:0, timer:null, lock:null };
@@ -1956,7 +2061,7 @@ document.addEventListener('visibilitychange',async()=>{ if(document.visibilitySt
 /* ---------- medir ---------- */
 const meas={ pts:[], line:null, poly:null, vtx:null };
 function startMeasure(){
-  view.mode='measure'; view.map.closePopup(); view.map.doubleClickZoom.disable(); $('#fabMeas').classList.add('meas'); $('#measBar').hidden=false;
+  endPinMode(); view.mode='measure'; view.map.closePopup(); view.map.doubleClickZoom.disable(); $('#fabMeas').classList.add('meas'); $('#measBar').hidden=false;
   meas.pts=[]; meas.vtx=L.layerGroup().addTo(view.map);
   meas.line=L.polyline([],{ color:'#16181a', weight:3, dashArray:'6 6' }).addTo(view.map);
   meas.poly=L.polygon([],{ stroke:false, fillColor:'#f2b705', fillOpacity:.3, interactive:false }).addTo(view.map);
@@ -2025,7 +2130,7 @@ async function openSheet(){
   html+= feats.length ? feats.map(f=>`<div class="row" data-f="${f.id}">${icoOf(f)}
       <div class="grow"><div>${esc(f.name)}</div><div class="sub">${subOf(f)}</div></div><button class="btn sm" data-go="${f.id}">Ver</button></div>`).join('')
     : `<div class="sub">Mantén presionado el mapa o usa el botón 📍 para agregar puntos (árboles, plagas, trampas, pozos, muestreo…).</div>`;
-  html+=`<h3>Exportar</h3><div class="btns"><button class="btn" data-exp="kmz">KMZ con fotos</button><button class="btn" data-exp="csv">Excel (CSV)</button><button class="btn" data-exp="geojson">GeoJSON</button></div>`;
+  html+=`<h3>Exportar</h3><div class="btns"><button class="btn" data-exp="kmz">KMZ con fotos</button><button class="btn" data-exp="kml">KML</button><button class="btn" data-exp="csv">Excel (CSV)</button><button class="btn" data-exp="geojson">GeoJSON</button></div>`;
   sh.innerHTML=html; $('#sheetWrap').hidden=false;
 
   const opR=$('#opR'); if(opR) opR.oninput=()=>{ const v=+opR.value; $('#opV').textContent=Math.round(v*100)+'%'; setOpacity(v); };
@@ -2082,7 +2187,7 @@ async function saveOrShare(blob, name){
     if(a==='s'){ try{ await navigator.share({ files:[file], title:name }); }catch(e){} return; }
     if(a!=='d') return;
   }
-  download(blob, name);
+  download(blob, name); toast(`“${name}” guardado en Descargas. Desde ahí lo puedes mandar por WhatsApp o correo.`,5000);
 }
 function attrMap(f){ const o={}; (f.attrs||[]).forEach(a=>{ if(a.k) o[a.k]=a.v; }); return o; }
 async function exportFeats(m, fmt){
@@ -2108,28 +2213,57 @@ async function exportFeats(m, fmt){
       return [f.name, catOf(f.cat).name, f.lat.toFixed(7), f.lng.toFixed(7), u[0].toFixed(1), u[1].toFixed(1), g[0].toFixed(1), g[1].toFixed(1), f.alt??'', f.acc??'', f.note||'', (f.photos||[]).length, fecha(f.t), ...keys.map(k=>am[k]??'')].map(q).join(','); });
     return saveOrShare(new Blob(['﻿'+[head.join(','),...rows].join('\r\n')],{type:'text/csv'}), `${safe}_puntos.csv`);
   }
-  // KMZ (KML + fotos)
-  const zip=new JSZip(), k2=c=>{ const h=(c||'#d9452b').replace('#',''); return 'ff'+h.slice(4,6)+h.slice(2,4)+h.slice(0,2); };
-  let ph=0;
+  // KML / KMZ (KMZ lleva las fotos georreferenciadas con EXIF GPS)
+  const kmz = fmt!=='kml', zip=kmz?new JSZip():null, k2=c=>{ const h=(c||'#d9452b').replace('#',''); return 'ff'+h.slice(4,6)+h.slice(2,4)+h.slice(0,2); };
+  if(kmz) await busy('Preparando KMZ con fotos…');
+  let ph=0; const photoPms=[];
+  const cats=[...new Set(feats.filter(f=>f.kind==='pin').map(f=>f.cat||'otro'))];
+  const styles=cats.map(c=>`<Style id="cat_${c}"><IconStyle><color>${k2(catOf(c).color)}</color><scale>1.1</scale><Icon><href>http://maps.google.com/mapfiles/kml/paddle/wht-blank.png</href></Icon></IconStyle><LabelStyle><scale>0.8</scale></LabelStyle></Style>`).join('')
+    +`<Style id="foto"><IconStyle><scale>0.8</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/camera.png</href></Icon></IconStyle></Style>`;
+  for(const f of feats){ if(f.kind!=='pin') continue; for(const p of (f.photos||[])){ const n=`fotos/${String(++ph).padStart(3,'0')}_${(f.name||'punto').replace(/[^\wáéíóúñÁÉÍÓÚÑ-]+/g,'_')}.jpg`; p._n=n;
+      if(kmz){ const g={ lat:p.lat??f.lat, lng:p.lng??f.lng, alt:p.alt??null, t:p.t||f.t }; zip.file(n, await writeExifGPS(p.blob,g)); } } }
+  const extData=pairs=>`<ExtendedData>${pairs.map(([k,v])=>`<Data name="${esc(k)}"><value>${esc(v)}</value></Data>`).join('')}</ExtendedData>`;
   const pm=feats.map(f=>{
-    let desc='', ext='';
     if(f.kind==='pin'){
-      const imgs=(f.photos||[]).map(p=>{ const n=`fotos/foto_${++ph}.jpg`; zip.file(n,p.blob); return `<img src="${n}" width="400"/><br/>`; }).join('');
-      const at=(f.attrs||[]).filter(a=>a.k);
-      desc=`<b>${esc(catOf(f.cat).name)}</b><br/>${f.note?esc(f.note)+'<br/>':''}${at.map(a=>`${esc(a.k)}: <b>${esc(a.v)}</b>`).join('<br/>')}${at.length?'<br/>':''}${imgs}${fecha(f.t)}`;
-      ext=`<ExtendedData><Data name="categoria"><value>${esc(catOf(f.cat).name)}</value></Data>${at.map(a=>`<Data name="${esc(a.k)}"><value>${esc(a.v)}</value></Data>`).join('')}</ExtendedData>`;
-    } else if(f.kind==='area') desc=`${fmtArea(f.area)} · perímetro ${fmtDist(f.dist)} · ${fecha(f.t)}`;
+      const at=(f.attrs||[]).filter(a=>a.k), u=gtXY('utm15',f.lat,f.lng);
+      const imgs=kmz?(f.photos||[]).map(p=>`<img src="${p._n}" width="420"/><br/>`).join(''):((f.photos||[]).length?`<i>${f.photos.length} foto(s) en el KMZ</i><br/>`:'');
+      const desc=`<b>${esc(catOf(f.cat).name)}</b><br/>${f.note?esc(f.note)+'<br/>':''}${at.map(a=>`${esc(a.k)}: <b>${esc(a.v)}</b>`).join('<br/>')}${at.length?'<br/>':''}${imgs}UTM 15N: ${u[0].toFixed(1)} E, ${u[1].toFixed(1)} N<br/>${fecha(f.t)}`;
+      return `<Placemark><name>${esc(f.name)}</name><TimeStamp><when>${new Date(f.t).toISOString()}</when></TimeStamp><description><![CDATA[${desc}]]></description><styleUrl>#cat_${f.cat||'otro'}</styleUrl>${extData([['categoria',catOf(f.cat).name],['descripcion',f.note||''],['fecha',fecha(f.t)],['utm15_e',u[0].toFixed(1)],['utm15_n',u[1].toFixed(1)],['fotos',(f.photos||[]).length],...at.map(a=>[a.k,a.v])])}<Point><coordinates>${f.lng},${f.lat},${f.alt??0}</coordinates></Point></Placemark>`;
+    }
+    let desc;
+    if(f.kind==='area') desc=`${fmtArea(f.area)} · perímetro ${fmtDist(f.dist)} · ${fecha(f.t)}`;
     else { const st=trackStats(f.pts,f.alts,f.times); desc=`${fmtDist(st.dist)}${st.dur?` · ${fmtDur(st.dur)}`:''}${st.speed?` · ${(st.speed*3.6).toFixed(1)} km/h`:''}${st.up!=null?` · ↑${st.up.toFixed(0)} m ↓${st.down.toFixed(0)} m`:''} · ${fecha(f.t)}`; }
-    const head=`<Placemark><name>${esc(f.name)}</name><description><![CDATA[${desc}]]></description>${ext}`;
-    if(f.kind==='pin') return `${head}<Style><IconStyle><color>${k2(pinColor(f))}</color></IconStyle></Style><Point><coordinates>${f.lng},${f.lat},0</coordinates></Point></Placemark>`;
+    const head=`<Placemark><name>${esc(f.name)}</name><description><![CDATA[${desc}]]></description>`;
     if(f.kind==='area') return `${head}<Style><LineStyle><color>ff1a1816</color><width>2</width></LineStyle><PolyStyle><color>5505b7f2</color></PolyStyle></Style><Polygon><outerBoundaryIs><LinearRing><coordinates>${[...f.pts,f.pts[0]].map(p=>`${p[1]},${p[0]},0`).join(' ')}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`;
-    return `${head}<Style><LineStyle><color>${k2(f.color||'#7c3aed')}</color><width>3</width></LineStyle></Style><LineString><coordinates>${f.pts.map((p,i)=>`${p[1]},${p[0]},${(f.alts&&f.alts[i])||0}`).join(' ')}</coordinates></LineString></Placemark>`;
-  }).join('\n');
-  zip.file('doc.kml',`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(m.name)} — puntos</name>\n${pm}\n</Document></kml>`);
-  await busy('Preparando KMZ…');
+    return `${head}<Style><LineStyle><color>${k2(f.color||'#7c3aed')}</color><width>3</width></LineStyle></Style><LineString><tessellate>1</tessellate><coordinates>${f.pts.map((p,i)=>`${p[1]},${p[0]},${(f.alts&&f.alts[i])||0}`).join(' ')}</coordinates></LineString></Placemark>`;
+  });
+  // carpeta de fotos: cada foto en el lugar donde se tomó
+  const fotos=kmz?feats.filter(f=>f.kind==='pin').flatMap(f=>(f.photos||[]).map(p=>`<Placemark><name>📷 ${esc(f.name)}</name><TimeStamp><when>${new Date(p.t||f.t).toISOString()}</when></TimeStamp><description><![CDATA[<img src="${p._n}" width="480"/><br/>${fecha(p.t||f.t)}]]></description><styleUrl>#foto</styleUrl><Point><coordinates>${p.lng??f.lng},${p.lat??f.lat},0</coordinates></Point></Placemark>`)):[];
+  const kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(m.name)} — trabajo de campo</name>${styles}
+<Folder><name>Puntos</name>${pm.filter((_,i)=>feats[i].kind==='pin').join('\n')}</Folder>
+<Folder><name>Recorridos y áreas</name>${pm.filter((_,i)=>feats[i].kind!=='pin').join('\n')}</Folder>
+${fotos.length?`<Folder><name>Fotos</name>${fotos.join('\n')}</Folder>`:''}
+</Document></kml>`;
+  if(!kmz) return saveOrShare(new Blob([kml],{type:'application/vnd.google-earth.kml+xml'}), `${safe}_trabajo.kml`);
+  zip.file('doc.kml', kml);
   const blob=await zip.generateAsync({ type:'blob', mimeType:'application/vnd.google-earth.kmz' }); done();
-  return saveOrShare(blob, `${safe}_puntos.kmz`);
+  return saveOrShare(blob, `${safe}_trabajo.kmz`);
 }
+/* Botón compartir: elegir formato */
+async function shareWork(m){
+  m=m||view.meta; if(!m) return;
+  const n=(await featsOf(m.id)).length;
+  if(!n){ toast('Aún no hay puntos, recorridos ni áreas en este mapa'); return; }
+  const a=await modal((c,close)=>{ c.innerHTML=`<h2>Compartir trabajo</h2><p>${n} elemento(s) de “${esc(m.name)}”.</p>
+    <button class="opt" data-a="kmz"><b>KMZ con fotos</b><span>Google Earth, QGIS, ArcGIS, Avenza. Fotos con GPS incluidas.</span></button>
+    <button class="opt" data-a="kml"><b>KML</b><span>Solo puntos, recorridos y áreas (archivo liviano).</span></button>
+    <button class="opt" data-a="csv"><b>Excel (CSV)</b><span>Tabla de puntos con UTM 15N, GTM y atributos.</span></button>
+    <button class="opt" data-a="geojson"><b>GeoJSON</b><span>Para QGIS o web.</span></button>
+    <div class="btns" style="margin-top:8px"><button class="btn" data-a="">Cancelar</button></div>`;
+    c.querySelectorAll('[data-a]').forEach(b=>b.onclick=()=>close(b.dataset.a)); });
+  if(a) exportFeats(m,a);
+}
+$('#shareBtn').onclick=()=>shareWork();
 
 /* =========================================================
    ARRANQUE / PWA
@@ -2143,7 +2277,19 @@ if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){ navigat
   try{ await openDB(); }catch(e){ $('#empty').hidden=false; $('#empty').innerHTML='<h2>Este navegador no permite guardar mapas</h2><p>Abre la app en Chrome (Android) o Safari (iPhone), fuera del modo incógnito.</p>'; return; }
   await renderLibrary();
   startGPS();
+  receiveShared();
 })();
+/* Archivos que llegan desde "Compartir" (Android) o "Abrir con" (computadora) */
+async function receiveShared(){
+  try{
+    if('launchQueue' in window) launchQueue.setConsumer(async p=>{ if(!p.files||!p.files.length) return; const fs=await Promise.all(p.files.map(h=>h.getFile())); importFiles(fs); });
+    if(!/[?&]compartido=1/.test(location.search)) return;
+    history.replaceState(null,'',location.pathname);
+    const c=await caches.open('compartidos'), ks=await c.keys(); if(!ks.length){ toast('No llegó ningún archivo'); return; }
+    const fs=[]; for(const k of ks){ const r=await c.match(k); const name=decodeURIComponent(r.headers.get('x-nombre')||'archivo'); fs.push(new File([await r.blob()], name, { type:r.headers.get('content-type')||'' })); await c.delete(k); }
+    importFiles(fs);
+  }catch(e){ console.warn('compartido',e); }
+}
 
 </script>
 </body>

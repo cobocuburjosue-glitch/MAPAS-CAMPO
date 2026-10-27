@@ -25,11 +25,17 @@ Punto azul con flecha de dirección al moverte. La barra inferior muestra coorde
 ## 4. Recorridos
 Botón de línea: graba. Calcula distancia, tiempo, velocidad promedio, subida/bajada y elevación mín–máx. Deja la pantalla encendida mientras grabas.
 
-## 5. Puntos de interés
-Mantén presionado el mapa o toca 📍 (en tu posición). Tipos: árbol, plaga, maleza, trampa, pozo, estación meteorológica, lindero, sitio de muestreo, otro. Cada punto lleva nombre, descripción, fotos (cámara o galería), coordenadas lat/lon y UTM, y atributos personalizados (la app recuerda los atributos que usaste por tipo).
+## 5. Placemarks (puntos de interés)
+Toca el botón 📍 para activar el **modo Placemark** y luego **toca 2 veces** (o doble clic) donde quieras el punto. También: "En mi posición" o mantener presionado el mapa.
+Cada punto guarda: nombre, tipo (árbol, plaga, maleza, trampa, pozo, estación, lindero, muestreo), coordenadas UTM 15N / GTM / lat-lon, fecha y hora, descripción, fotos y atributos (Lote, Finca, Plaga, Incidencia, Responsable…).
+- Si el punto cae dentro de un lote de tu KMZ o shapefile, **Lote y Finca se llenan solos**.
+- **Fotos georreferenciadas:** cada foto guarda sus propias coordenadas (las de la foto si las trae, o el GPS al tomarla) y la hora. Al exportar se escriben dentro del JPG (EXIF GPS), así QGIS ("Importar fotos geoetiquetadas"), ArcGIS y Google Earth las ubican.
 
-## Exportar
-Botón capas ▸ Exportar: **KMZ con fotos** (Google Earth / QGIS), **CSV** (Excel, con UTM y atributos) o **GeoJSON**. Se puede compartir directo por WhatsApp o correo.
+## Compartir el trabajo
+Botón ⇪ arriba: **KMZ con fotos**, **KML**, **Excel (CSV)** o **GeoJSON**. El KMZ trae carpetas Puntos, Recorridos y áreas, y Fotos (cada foto en el lugar donde se tomó).
+
+## Abrir archivos con la app
+Con la app instalada, en WhatsApp, Archivos o Drive toca **Compartir ▸ Mapas** y el mapa se importa solo. En computadora: clic derecho ▸ Abrir con ▸ Mapas de Campo. Si no aparece la opción, desinstala la app y vuelve a instalarla desde el enlace.
 
 ## Otras herramientas
 Medir distancia y área (ha), superponer varios mapas, opacidad y colores del ráster.

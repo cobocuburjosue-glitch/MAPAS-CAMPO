@@ -22,5 +22,96 @@
    "type": "image/png",
    "purpose": "any maskable"
   }
+ ],
+ "id": "./",
+ "share_target": {
+  "action": "./compartir",
+  "method": "POST",
+  "enctype": "multipart/form-data",
+  "params": {
+   "title": "title",
+   "text": "text",
+   "files": [
+    {
+     "name": "archivos",
+     "accept": [
+      "*/*",
+      ".kmz",
+      ".kml",
+      ".pdf",
+      ".tif",
+      ".tiff",
+      ".zip",
+      ".geojson",
+      ".gpx",
+      ".jpg",
+      ".png",
+      ".shp",
+      ".dbf",
+      ".prj",
+      ".shx",
+      ".jgw",
+      ".pgw",
+      ".wld",
+      "application/vnd.google-earth.kmz",
+      "application/vnd.google-earth.kml+xml",
+      "application/pdf",
+      "image/*",
+      "application/zip",
+      "application/octet-stream"
+     ]
+    }
+   ]
+  }
+ },
+ "file_handlers": [
+  {
+   "action": "./",
+   "accept": {
+    "application/vnd.google-earth.kmz": [
+     ".kmz"
+    ],
+    "application/vnd.google-earth.kml+xml": [
+     ".kml"
+    ],
+    "application/pdf": [
+     ".pdf"
+    ],
+    "image/tiff": [
+     ".tif",
+     ".tiff"
+    ],
+    "application/zip": [
+     ".zip"
+    ],
+    "application/geo+json": [
+     ".geojson"
+    ],
+    "application/gpx+xml": [
+     ".gpx"
+    ],
+    "image/jpeg": [
+     ".jpg",
+     ".jpeg",
+     ".jgw",
+     ".wld"
+    ],
+    "image/png": [
+     ".png",
+     ".pgw"
+    ],
+    "application/octet-stream": [
+     ".kmz",
+     ".kml",
+     ".shp",
+     ".dbf",
+     ".shx",
+     ".prj",
+     ".geojson",
+     ".gpx",
+     ".tif"
+    ]
+   }
+  }
  ]
 }
